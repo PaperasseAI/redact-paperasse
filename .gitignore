@@ -1,4 +1,5 @@
 /target
+/test-assets
 node_modules/
 *.node
 *.wasm

@@ -2,7 +2,7 @@
 
 A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, text, or (optionally) markdown out. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
-> **Status: early, but building.** `cargo test --workspace` passes (25 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction, PDF reassembly, and an optional Presidio (Tier B) pass, not just the text path. CI runs all of this on every push. See [Build status](#build-status) for exactly what's compiler-verified vs. still needs a real document/runtime check.
+> **Status: early, but working.** `cargo test --workspace` passes (25 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
 
@@ -83,11 +83,17 @@ This is real, not aspirational — getting here caught and fixed several genuine
 6. **`Input` originally had no way to represent a DOCX/XLSX/PPTX/CSV/etc. document at all** — only `Text | Pdf | Image` — despite anydoc's office-format coverage being a core part of the architecture's rationale. Discovered while writing direct tests for the ingest routing logic: there was no way to even construct a test case for it. Added `Input::Document { bytes, format: Option<DocumentFormat> }`, wired through all three `Ingestor` impls, with `OutputFormat::Native` correctly rejected for it (anydoc only ever converts *to* markdown, never back to a native office format).
 7. Two real `cargo test`/`clippy` catches during the same pass: a partial-move borrow-checker error in the CLI (`cli.r#as.unwrap_or_else(...)` moved a field out from under a later `&cli` borrow — fixed with `.clone()`), and a `#[cfg(feature = "tier-b")]`-gated function called from a call site that wasn't itself feature-gated (compiled under `--features tier-b`, failed under default features) — both caught by actually running both build configurations, not just one.
 
-What a type check *can't* validate — still needs a real document, not just a compiler:
+### Verified against a real document, not just a compiler
 
-1. `LiteparseIngestor::ingest_image` — assumes liteparse's `PdfInput::Bytes` entry point accepts a plain image per its README/flowchart. Compiles; not run against a real image yet.
-2. The DPI assumption in `redact_image_bytes` (hardcoded to liteparse's default 150, not derived from the actual OCR call) — likely wrong for a real photo, would misplace redaction boxes.
-3. The `XObjectTransform`/page-sizing math in `redact_pdf_bytes` — compiles against printpdf 0.9.1's real API, but whether each page image lands scaled/positioned correctly on its `PdfPage` hasn't been checked against an actual rendered PDF.
+`ppr` run end to end (`ingest → Tier A → redact`, `OutputFormat::Native`) against a real photographed French URSSAF letter — the exact same document used earlier to validate the `FR_NIR` Presidio recognizer this whole project grew out of — both as a **plain image** and as that same image **embedded in a PDF** (to exercise the PDF-specific render → redact → reassemble path separately). Both times: the NIR field was correctly detected (`FR_NIR`, score 1.0, real `bbox` coordinates) and the redaction box landed pixel-precise on it — nothing else on the page (name, address, other reference numbers, signature) was touched, page dimensions and layout fully intact in the reassembled PDF.
+
+This resolved every item the README used to list as unverified:
+
+1. `LiteparseIngestor::ingest_image` **does** correctly accept a plain image via `PdfInput::Bytes`, per liteparse's own README/flowchart — confirmed by real OCR output (`[liteparse] ocr: 2201.4ms`), not just a passing type check.
+2. The DPI assumption in `redact_image_bytes` (liteparse's default 150) **was correct** — the box landed exactly on the target text, not offset.
+3. The `XObjectTransform`/page-sizing math in `redact_pdf_bytes` **was correct** — the redacted page image scaled and positioned exactly onto its `PdfPage`, no cropping, stretching, or offset in the reassembled PDF.
+
+Along the way this also surfaced a real bug in a dependency, not in this code: `tesseract-rs`'s build script downloads its language data (`eng.traineddata`, `tur.traineddata`) but only checks the file *exists* before skipping re-download, not that it's valid — an earlier network timeout during this project's own build left 0-byte stub files that `tesseract-rs` happily "found" on every subsequent build, failing at OCR *runtime* with "Failed to initialize Tesseract" rather than at build time. Fixed locally by deleting the corrupt files and `cargo clean -p tesseract-rs` to force a real re-download; worth keeping in mind if this ever recurs (e.g. after a CI runner's cache gets a similarly-interrupted first build).
 
 ## License
 
