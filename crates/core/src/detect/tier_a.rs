@@ -1,4 +1,4 @@
-use paperasse_privacy_recognizers::{Recognizer, default_registry};
+use paperasse_privacy_recognizers::{default_registry, Recognizer};
 
 use crate::types::{DetectionSource, Entity, ExtractedDocument, Span};
 
@@ -32,7 +32,20 @@ impl TierA {
     /// aren't" needs per-entity-type selection, not all-or-nothing).
     /// Unrecognized names in the filter are silently ignored, same as
     /// Presidio does for an unknown entity type.
-    pub fn analyze(&self, doc: &ExtractedDocument, entities: Option<&[String]>) -> Vec<Entity> {
+    ///
+    /// `score_threshold` mirrors Presidio's own `score_threshold`: a match
+    /// scoring below it is dropped. Most Tier A recognizers today report a
+    /// fixed score regardless of context (checksum-validated ones like
+    /// `FrNir` report 1.0 or don't match at all; `Email` always reports
+    /// 0.9), so this mainly matters once a recognizer with real confidence
+    /// variance exists, or when merging in Tier B's NER scores — but the
+    /// filter is correct and available now rather than bolted on later.
+    pub fn analyze(
+        &self,
+        doc: &ExtractedDocument,
+        entities: Option<&[String]>,
+        score_threshold: Option<f32>,
+    ) -> Vec<Entity> {
         let mut out = Vec::new();
         for recognizer in &self.recognizers {
             if let Some(wanted) = entities {
@@ -41,6 +54,11 @@ impl TierA {
                 }
             }
             for m in recognizer.analyze(&doc.text) {
+                if let Some(threshold) = score_threshold {
+                    if m.score < threshold {
+                        continue;
+                    }
+                }
                 let bbox = doc
                     .word_boxes
                     .iter()

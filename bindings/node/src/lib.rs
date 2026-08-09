@@ -12,6 +12,9 @@ pub struct RedactTextOptions {
     /// Presidio's `analyzer_entities` filter. Omit/undefined to redact
     /// every entity type Tier A's recognizers cover.
     pub entities: Option<Vec<String>>,
+    /// Drop matches scoring below this (0.0-1.0). Matches Presidio's
+    /// `score_threshold`. Omit/undefined for no filtering.
+    pub score_threshold: Option<f64>,
 }
 
 /// Redact PII from plain text — the fastest path (Tier A, in-process, no
@@ -24,6 +27,7 @@ pub async fn redact_text(text: String, options: Option<RedactTextOptions>) -> na
     let options = options.unwrap_or(RedactTextOptions {
         markdown: None,
         entities: None,
+        score_threshold: None,
     });
     let engine = Engine::default();
     let format = if options.markdown.unwrap_or(false) {
@@ -32,7 +36,12 @@ pub async fn redact_text(text: String, options: Option<RedactTextOptions>) -> na
         OutputFormat::Native
     };
     let result = engine
-        .process(Input::Text(text), format, options.entities.as_deref())
+        .process(
+            Input::Text(text),
+            format,
+            options.entities.as_deref(),
+            options.score_threshold.map(|t| t as f32),
+        )
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
     Ok(result.text.or(result.markdown).unwrap_or_default())

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust:
+    name: Rust (native)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      # liteparse's default `tesseract` feature builds Tesseract + Leptonica
+      # from source via CMake — see crates/core/Cargo.toml's comment on why
+      # that dependency exists at all, and this repo's README "Build
+      # status" section for how that was discovered.
+      - name: Install native build dependencies (Tesseract/Leptonica via CMake)
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - run: cargo test --workspace --locked
+      - name: Check the tier-b feature builds standalone
+        run: cargo check -p paperasse-privacy-cli --features tier-b --locked
+
+  wasm:
+    name: Rust (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-unknown-unknown
+      # No cmake/OCR toolchain needed here: crates/core/Cargo.toml's
+      # target-specific liteparse dependency disables the `tesseract`
+      # feature under wasm32 (see that file's comment) — pixel-level PDF
+      # redaction is unavailable on this target regardless (liteparse's
+      # own screenshot_input doesn't exist for wasm32), so the wasm binding
+      # only exposes Tier A text redaction.
+      - run: cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -- -D warnings
+
+  node:
+    name: Node binding (build + real example)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native build dependencies (Tesseract/Leptonica via CMake)
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+        working-directory: bindings/node
+      - run: npx napi build --platform
+        working-directory: bindings/node
+      - name: Run the real example against the built native addon
+        run: node example.mjs
+        working-directory: bindings/node

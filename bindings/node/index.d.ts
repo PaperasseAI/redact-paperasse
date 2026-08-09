@@ -13,6 +13,11 @@ export interface RedactTextOptions {
    * every entity type Tier A's recognizers cover.
    */
   entities?: Array<string>
+  /**
+   * Drop matches scoring below this (0.0-1.0). Matches Presidio's
+   * `score_threshold`. Omit/undefined for no filtering.
+   */
+  scoreThreshold?: number
 }
 /**
  * Redact PII from plain text — the fastest path (Tier A, in-process, no

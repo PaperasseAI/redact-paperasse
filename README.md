@@ -1,13 +1,13 @@
 # paperasse-privacy
 
-A privacy engine for agents: image, PDF, or text in → redacted image, PDF, text, or (optionally) markdown out. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
+A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, text, or (optionally) markdown out. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
-> **Status: early, but building.** `cargo test --workspace` passes (16 tests: FR_NIR/EMAIL_ADDRESS recognizers, text masking including a real French-accented regression case, and the end-to-end text pipeline). The full ingest → detect → redact pipeline is implemented for text, images, and PDFs — including pixel redaction and PDF reassembly, not just the text path. See [Build status](#build-status) for exactly what's compiler-verified vs. still needs a real document/runtime check.
+> **Status: early, but building.** `cargo test --workspace` passes (25 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction, PDF reassembly, and an optional Presidio (Tier B) pass, not just the text path. CI runs all of this on every push. See [Build status](#build-status) for exactly what's compiler-verified vs. still needs a real document/runtime check.
 
 ## Architecture
 
 ```text
-Input (image | pdf | text)
+Input (image | pdf | office document | text)
    │
    ▼
 [1] ingest   — anydoc (office formats + text-based PDFs, pure Rust, no OCR)
@@ -16,7 +16,8 @@ Input (image | pdf | text)
    │
    ▼
 [2] detect   — Tier A: in-process regex+checksum recognizers (default,
-               zero network hop — see crates/recognizers)
+               zero network hop — see crates/recognizers), filterable by
+               entities/score_threshold (mirrors Presidio's own fields)
                Tier B: optional REST call to a Presidio deployment, for
                NER (names, locations, context-dependent entities) Tier A
                structurally can't cover
@@ -41,7 +42,9 @@ Neither library is forked or modified — both are consumed as ordinary crates.i
 
 Regex+checksum recognizers (SSNs, the French NIR, IBANs, emails — a fixed identifier format with a real validation algorithm) are cheap, deterministic, and portable to any language with zero ML dependency. General NER (names, locations, anything context-dependent) needs a real NLP stack and is meaningfully less certain — in testing against a real document while building the `FR_NIR` recognizer for Presidio (on the `paperasse-fr-nir` branch of `data-privacy-stack/presidio`), the checksum-validated match was the reliable signal; the NER layer's guesses (misclassifying an account number as a date, a dossier number as a UK health-service number) were the wrong ones.
 
-So Tier A — the regex+checksum layer — is the default, in-process, zero-network path (`crates/recognizers`), meant to run inside the same process as the caller via the native bindings. Tier B is an explicit opt-in REST call to a Presidio deployment, for when Tier A's coverage genuinely isn't enough and the latency/network hop is worth it.
+So Tier A — the regex+checksum layer — is the default, in-process, zero-network path (`crates/recognizers`), meant to run inside the same process as the caller via the native bindings. Tier B is an explicit opt-in REST call to a Presidio deployment, for when Tier A's coverage genuinely isn't enough and the latency/network hop is worth it. Both tiers accept the same two filters (`entities`, `score_threshold`), matching Presidio's own `analyzer_entities`/`score_threshold` request fields — see `Engine::process`.
+
+Tier B is fail-closed by design, not fail-open: if the Presidio deployment is unreachable, the call errors rather than silently degrading to Tier-A-only output that *looks* fully redacted but isn't. It's also currently scoped to text input only — it never has pixel coordinates (`Entity::bbox` is always `None` from Tier B), so a `--tier-b` image/PDF redaction request refuses outright instead of silently skipping the entities it can't place on the page.
 
 ## Repo layout
 
@@ -49,9 +52,9 @@ So Tier A — the regex+checksum layer — is the default, in-process, zero-netw
 crates/
   core/         paperasse-privacy-core — the pipeline (ingest/detect/redact)
   recognizers/  paperasse-privacy-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS, ...
-  cli/          `ppr` binary
+  cli/          `ppr` binary (--features tier-b for the Presidio flag)
 bindings/
-  node/         napi-rs (@paperasse/privacy on npm)
+  node/         napi-rs (@paperasse/privacy on npm) — see example.mjs
   python/       PyO3 + maturin (paperasse-privacy on PyPI)
   wasm/         wasm-bindgen, browser-only — Tier A text redaction only,
                 see "Build status" for why pixel redaction can't exist here
@@ -63,18 +66,22 @@ Each recognizer is a self-contained module in `crates/recognizers/src/` implemen
 
 ## Build status
 
-Clean, zero warnings, on both targets that matter:
+Clean, zero warnings, on everything CI checks (`.github/workflows/ci.yml`):
 
-- `cargo check --workspace` and `cargo test --workspace` — native host (macOS arm64): core, recognizers, CLI, and all three binding crates. **16/16 tests pass.**
-- `cargo check --target wasm32-unknown-unknown -p paperasse-privacy-wasm` — the browser binding, checked against the actual wasm32 target, not just the host target `cargo check --workspace` alone would validate.
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **25/25 tests pass.**
+- `cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
+- `cargo check -p paperasse-privacy-cli --features tier-b` — the Presidio-calling code path, which is off by default.
+- The Node binding is built for real (`napi build --platform`) and exercised with `example.mjs` against the actual compiled addon, not just type-checked.
 
 This is real, not aspirational — getting here caught and fixed several genuine bugs, not just typos:
 
 1. A byte-offset-vs-char-index bug in `mask_text` (was collecting into a `Vec<char>` while spans are byte offsets from `regex`) — caught by the FR_NIR recognizer's own "found within surrounding French text" test, where three accented characters shifted every mask out of position. Fixed to slice `&str` directly; regression tests added in `redact.rs`.
 2. An ingestion-routing gap: a PDF with a real text layer went through anydoc (fast, but produces no bounding boxes and can't see PII inside embedded images), while `OutputFormat::Native` output always tried to draw boxes — meaning PII correctly *detected* via the text path was silently never *redacted* in the pixel output. Fixed: `Ingestor::ingest` takes a `needs_boxes` hint now; any `OutputFormat::Native` PDF always routes through liteparse regardless of whether it has a text layer, and `AnydocIngestor` actively refuses (`EngineError::Unsupported`) rather than silently under-redact.
 3. printpdf 0.9.1's real `PdfDocument::save` signature (needs a `&mut Vec<PdfWarnMsg>` the docs example omits).
-4. liteparse 2.11.1 itself doesn't compile cleanly for `wasm32` with default features (an unconditional `use` of a module that's correctly `wasm32`-gated at declaration, but not at the import site) — worked around via a workspace-inheritance-correct feature split (native builds opt into `tesseract` explicitly; wasm32 gets liteparse's bare default).
+4. liteparse 2.11.1 itself doesn't compile cleanly for `wasm32` with default features (an unconditional `use` of a module that's correctly `wasm32`-gated at declaration, but not at the import site) — worked around via a workspace-inheritance-correct feature split (native builds opt into `tesseract` explicitly; wasm32 gets liteparse's bare default). Also: `default-features` can only be overridden *downward* if the workspace-level entry is already `false` — a member crate can't turn off a workspace-`true` default, only add features on top of a workspace-`false` baseline. Took a second pass to get this ordering right.
 5. **A real upstream constraint, not a bug**: `LiteParse::screenshot_input` — which `redact_pdf_bytes` depends on for pixel-level PDF redaction — doesn't exist in liteparse's wasm32 build at all (no PDFium-to-raster path there). So pixel-level PDF/image redaction is `#[cfg(not(target_arch = "wasm32"))]`-gated; the wasm32 binding only exposes Tier A text redaction, which is what actually runs client-side in a browser anyway.
+6. **`Input` originally had no way to represent a DOCX/XLSX/PPTX/CSV/etc. document at all** — only `Text | Pdf | Image` — despite anydoc's office-format coverage being a core part of the architecture's rationale. Discovered while writing direct tests for the ingest routing logic: there was no way to even construct a test case for it. Added `Input::Document { bytes, format: Option<DocumentFormat> }`, wired through all three `Ingestor` impls, with `OutputFormat::Native` correctly rejected for it (anydoc only ever converts *to* markdown, never back to a native office format).
+7. Two real `cargo test`/`clippy` catches during the same pass: a partial-move borrow-checker error in the CLI (`cli.r#as.unwrap_or_else(...)` moved a field out from under a later `&cli` borrow — fixed with `.clone()`), and a `#[cfg(feature = "tier-b")]`-gated function called from a call site that wasn't itself feature-gated (compiled under `--features tier-b`, failed under default features) — both caught by actually running both build configurations, not just one.
 
 What a type check *can't* validate — still needs a real document, not just a compiler:
 

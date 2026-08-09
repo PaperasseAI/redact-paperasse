@@ -1,10 +1,48 @@
 use serde::{Deserialize, Serialize};
 
-/// What goes into the pipeline.
+/// What goes into the pipeline. `Image` carries only bytes, not a declared
+/// media type — nothing downstream trusts a caller-supplied type anyway;
+/// `redact_image_bytes` re-derives the real format from content via
+/// `image::guess_format`, and every ingestor destructures the bytes and
+/// ignores anything else. A caller-declared type that's never checked
+/// against the actual content is worse than no field at all.
 pub enum Input {
     Text(String),
     Pdf(Vec<u8>),
-    Image { bytes: Vec<u8>, media_type: String },
+    Image(Vec<u8>),
+    /// A DOCX/XLSX/PPTX/RTF/EPUB/ODT/ODS/ODP/CSV (or legacy .doc/.ppt/.xls)
+    /// document — anything anydoc converts to Markdown that isn't a PDF.
+    /// `format` selects the parser; `None` auto-detects from content (works
+    /// for everything except CSV, which carries no signature and must be
+    /// named explicitly — same rule as `anydoc::Format::from_bytes`).
+    ///
+    /// Only `OutputFormat::Markdown` is meaningful here: anydoc converts
+    /// TO markdown, never back to DOCX/XLSX/etc., so there's no "redacted
+    /// native document" this pipeline can produce for this variant.
+    /// `Engine::process` rejects `OutputFormat::Native` for a `Document`
+    /// input rather than silently doing something else.
+    Document {
+        bytes: Vec<u8>,
+        format: Option<DocumentFormat>,
+    },
+}
+
+/// Mirrors `anydoc::Format` minus `Pdf` (that's `Input::Pdf` instead, since
+/// a PDF can also need liteparse's OCR path — a distinction that doesn't
+/// apply to any of these formats).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocumentFormat {
+    Doc,
+    Docx,
+    Odt,
+    Ppt,
+    Pptx,
+    Rtf,
+    Epub,
+    Excel,
+    Ods,
+    Odp,
+    Csv,
 }
 
 /// What comes out. `Native` (the default) mirrors the input's own shape —

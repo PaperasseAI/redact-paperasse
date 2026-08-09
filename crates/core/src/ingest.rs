@@ -1,7 +1,42 @@
 use async_trait::async_trait;
 
 use crate::error::EngineError;
-use crate::types::{BoundingBox, ExtractedDocument, Input, Span, WordBox};
+use crate::types::{BoundingBox, DocumentFormat, ExtractedDocument, Input, Span, WordBox};
+
+impl From<DocumentFormat> for anydoc::Format {
+    fn from(format: DocumentFormat) -> Self {
+        match format {
+            DocumentFormat::Doc => anydoc::Format::Doc,
+            DocumentFormat::Docx => anydoc::Format::Docx,
+            DocumentFormat::Odt => anydoc::Format::Odt,
+            DocumentFormat::Ppt => anydoc::Format::Ppt,
+            DocumentFormat::Pptx => anydoc::Format::Pptx,
+            DocumentFormat::Rtf => anydoc::Format::Rtf,
+            DocumentFormat::Epub => anydoc::Format::Epub,
+            DocumentFormat::Excel => anydoc::Format::Excel,
+            DocumentFormat::Ods => anydoc::Format::Ods,
+            DocumentFormat::Odp => anydoc::Format::Odp,
+            DocumentFormat::Csv => anydoc::Format::Csv,
+        }
+    }
+}
+
+/// Shared by `DefaultIngestor` and `AnydocIngestor`: both handle
+/// `Input::Document` identically (it never routes to liteparse — DOCX/XLSX/
+/// etc. rendering-to-boxes isn't something this pipeline supports, see
+/// `Input::Document`'s doc comment).
+async fn ingest_document(
+    bytes: &[u8],
+    format: Option<DocumentFormat>,
+) -> Result<ExtractedDocument, EngineError> {
+    let markdown = anydoc::to_markdown_bytes(bytes, format.map(anydoc::Format::from))
+        .map_err(|e| EngineError::Ingest(e.to_string()))?;
+    Ok(ExtractedDocument {
+        text: markdown.clone(),
+        markdown: Some(markdown),
+        ..Default::default()
+    })
+}
 
 #[async_trait]
 pub trait Ingestor: Send + Sync {
@@ -13,7 +48,11 @@ pub trait Ingestor: Send + Sync {
     /// structure, not raster content), so it must never be the ingest
     /// path when the output needs pixel-accurate redaction — see
     /// `DefaultIngestor::ingest` for how that's enforced.
-    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError>;
+    async fn ingest(
+        &self,
+        input: &Input,
+        needs_boxes: bool,
+    ) -> Result<ExtractedDocument, EngineError>;
 }
 
 /// Routes anydoc (office formats + text-based PDFs — no OCR, no bounding
@@ -31,9 +70,26 @@ pub struct DefaultIngestor {
     liteparse: LiteparseIngestor,
 }
 
+impl DefaultIngestor {
+    /// Use a specific `LiteParseConfig` (e.g. non-default DPI, or an
+    /// `ocr_server_url`) instead of `LiteParseConfig::default()`. Prefer
+    /// `Engine::with_liteparse_config` over calling this directly — that
+    /// threads the same config into `redact_pdf_bytes` too, which needs to
+    /// agree with whatever DPI ingestion used.
+    pub fn with_liteparse_config(config: liteparse::config::LiteParseConfig) -> Self {
+        Self {
+            liteparse: LiteparseIngestor::with_config(config),
+        }
+    }
+}
+
 #[async_trait]
 impl Ingestor for DefaultIngestor {
-    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
+    async fn ingest(
+        &self,
+        input: &Input,
+        needs_boxes: bool,
+    ) -> Result<ExtractedDocument, EngineError> {
         match input {
             Input::Text(text) => Ok(ExtractedDocument {
                 text: text.clone(),
@@ -64,7 +120,8 @@ impl Ingestor for DefaultIngestor {
                     _ => self.liteparse.ingest_pdf(bytes).await,
                 }
             }
-            Input::Image { bytes, .. } => self.liteparse.ingest_image(bytes).await,
+            Input::Image(bytes) => self.liteparse.ingest_image(bytes).await,
+            Input::Document { bytes, format } => ingest_document(bytes, *format).await,
         }
     }
 }
@@ -77,7 +134,11 @@ pub struct AnydocIngestor;
 
 #[async_trait]
 impl Ingestor for AnydocIngestor {
-    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
+    async fn ingest(
+        &self,
+        input: &Input,
+        needs_boxes: bool,
+    ) -> Result<ExtractedDocument, EngineError> {
         let (bytes, format): (&[u8], Option<anydoc::Format>) = match input {
             Input::Text(text) => {
                 return Ok(ExtractedDocument {
@@ -100,14 +161,17 @@ impl Ingestor for AnydocIngestor {
                 }
                 (bytes, Some(anydoc::Format::Pdf))
             }
-            Input::Image { .. } => {
+            Input::Image(_) => {
                 return Err(EngineError::Unsupported(
                     "anydoc does not read raster images; use the liteparse ingest path".into(),
                 ));
             }
+            Input::Document { bytes, format } => {
+                return ingest_document(bytes, *format).await;
+            }
         };
-        let markdown =
-            anydoc::to_markdown_bytes(bytes, format).map_err(|e| EngineError::Ingest(e.to_string()))?;
+        let markdown = anydoc::to_markdown_bytes(bytes, format)
+            .map_err(|e| EngineError::Ingest(e.to_string()))?;
         Ok(ExtractedDocument {
             text: markdown.clone(),
             markdown: Some(markdown),
@@ -120,16 +184,9 @@ impl Ingestor for AnydocIngestor {
 /// text + bounding boxes for scanned/image PDFs and plain images, via
 /// PDFium + optional OCR (bundled Tesseract by default, or an HTTP OCR
 /// server — see `LiteParseConfig::ocr_server_url`).
+#[derive(Default)]
 pub struct LiteparseIngestor {
     config: liteparse::config::LiteParseConfig,
-}
-
-impl Default for LiteparseIngestor {
-    fn default() -> Self {
-        Self {
-            config: liteparse::config::LiteParseConfig::default(),
-        }
-    }
 }
 
 impl LiteparseIngestor {
@@ -153,8 +210,8 @@ impl LiteparseIngestor {
     }
 
     async fn parse(&self, bytes: &[u8]) -> Result<ExtractedDocument, EngineError> {
-        use liteparse::LiteParse;
         use liteparse::types::PdfInput;
+        use liteparse::LiteParse;
 
         let parser = LiteParse::new(self.config.clone());
         let result = parser
@@ -170,7 +227,8 @@ impl LiteparseIngestor {
         // nicer layout-aware text reconstruction; revisit once buildable if
         // the redaction step needs prettier extracted text too.
         let mut text = String::new();
-        let mut word_boxes = Vec::with_capacity(result.pages.iter().map(|p| p.text_items.len()).sum());
+        let mut word_boxes =
+            Vec::with_capacity(result.pages.iter().map(|p| p.text_items.len()).sum());
         for page in &result.pages {
             for item in &page.text_items {
                 if !text.is_empty() {
@@ -206,14 +264,116 @@ impl Ingestor for LiteparseIngestor {
     /// Ignores `needs_boxes` — this is the path a caller reaches for
     /// specifically because it always produces boxes (and OCRs embedded
     /// images), so there's nothing to change behavior on.
-    async fn ingest(&self, input: &Input, _needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
+    async fn ingest(
+        &self,
+        input: &Input,
+        _needs_boxes: bool,
+    ) -> Result<ExtractedDocument, EngineError> {
         match input {
             Input::Text(text) => Ok(ExtractedDocument {
                 text: text.clone(),
                 ..Default::default()
             }),
             Input::Pdf(bytes) => self.ingest_pdf(bytes).await,
-            Input::Image { bytes, .. } => self.ingest_image(bytes).await,
+            Input::Image(bytes) => self.ingest_image(bytes).await,
+            Input::Document { .. } => Err(EngineError::Unsupported(
+                "LiteparseIngestor doesn't handle office-document formats (DOCX/XLSX/PPTX/...) — \
+                 that's deliberately anydoc's job (see AnydocIngestor); this pipeline never routes \
+                 through liteparse's LibreOffice-based conversion"
+                    .into(),
+            )),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::DocumentFormat;
+
+    fn block_on<F: std::future::Future>(f: F) -> F::Output {
+        tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(f)
+    }
+
+    #[test]
+    fn anydoc_extracts_real_csv() {
+        // No PDFium, no OCR, no native binary — anydoc's actual (real,
+        // not mocked) CSV parser, reachable now that Input::Document
+        // exists. This is the capability the whole reason for depending
+        // on anydoc rests on; before Input::Document, nothing in this
+        // codebase could ever exercise it.
+        let csv = b"name,amount\nAlice,10\nBob,20\n".to_vec();
+        let result = block_on(AnydocIngestor.ingest(
+            &Input::Document {
+                bytes: csv,
+                format: Some(DocumentFormat::Csv),
+            },
+            false,
+        ))
+        .expect("anydoc parses well-formed CSV");
+        assert!(result.markdown.is_some());
+        let markdown = result.markdown.unwrap();
+        assert!(markdown.contains("Alice"));
+        assert!(markdown.contains("Bob"));
+        assert!(result.word_boxes.is_empty()); // anydoc never produces boxes
+    }
+
+    #[test]
+    fn anydoc_refuses_pdf_when_boxes_are_needed() {
+        // Garbage bytes are fine here: the refusal happens before anydoc
+        // ever tries to parse them (see AnydocIngestor::ingest).
+        let result = block_on(AnydocIngestor.ingest(&Input::Pdf(vec![0u8; 4]), true));
+        assert!(matches!(result, Err(EngineError::Unsupported(_))));
+    }
+
+    #[test]
+    fn anydoc_refuses_images() {
+        let result = block_on(AnydocIngestor.ingest(&Input::Image(vec![0u8; 4]), false));
+        assert!(matches!(result, Err(EngineError::Unsupported(_))));
+    }
+
+    #[test]
+    fn anydoc_text_is_a_passthrough() {
+        let result =
+            block_on(AnydocIngestor.ingest(&Input::Text("hello world".into()), false)).unwrap();
+        assert_eq!(result.text, "hello world");
+        assert!(result.markdown.is_none()); // no conversion happened, nothing to report
+    }
+
+    #[test]
+    fn default_ingestor_text_is_a_passthrough() {
+        let result =
+            block_on(DefaultIngestor::default().ingest(&Input::Text("hello world".into()), false))
+                .unwrap();
+        assert_eq!(result.text, "hello world");
+    }
+
+    #[test]
+    fn default_ingestor_routes_document_through_anydoc() {
+        let csv = b"a,b\n1,2\n".to_vec();
+        let result = block_on(DefaultIngestor::default().ingest(
+            &Input::Document {
+                bytes: csv,
+                format: Some(DocumentFormat::Csv),
+            },
+            false,
+        ))
+        .unwrap();
+        assert!(result.markdown.unwrap().contains('1'));
+    }
+
+    #[test]
+    fn liteparse_ingestor_refuses_document_input() {
+        let result = block_on(LiteparseIngestor::default().ingest(
+            &Input::Document {
+                bytes: vec![],
+                format: Some(DocumentFormat::Csv),
+            },
+            false,
+        ));
+        assert!(matches!(result, Err(EngineError::Unsupported(_))));
     }
 }

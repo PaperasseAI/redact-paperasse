@@ -39,7 +39,10 @@ mod tests {
     fn finds_email_in_text() {
         let matches = Email.analyze("Contact john.smith@example.com for details.");
         assert_eq!(matches.len(), 1);
-        assert_eq!(&"Contact john.smith@example.com for details."[matches[0].start..matches[0].end], "john.smith@example.com");
+        assert_eq!(
+            &"Contact john.smith@example.com for details."[matches[0].start..matches[0].end],
+            "john.smith@example.com"
+        );
     }
 
     #[test]

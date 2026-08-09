@@ -72,7 +72,11 @@ mod tests {
     use super::*;
 
     fn spans(text: &str) -> Vec<(usize, usize)> {
-        FrNir.analyze(text).into_iter().map(|m| (m.start, m.end)).collect()
+        FrNir
+            .analyze(text)
+            .into_iter()
+            .map(|m| (m.start, m.end))
+            .collect()
     }
 
     // Same fixtures as presidio-analyzer/tests/test_fr_nir_recognizer.py on the

@@ -10,6 +10,13 @@ version.workspace = true
 name = "ppr"
 path = "src/main.rs"
 
+[features]
+default = []
+# Off by default so `cargo build`/`cargo install` for the plain CLI never
+# pulls in reqwest — matches paperasse-privacy-core's own tier-b feature
+# being opt-in. Build with `--features tier-b` for the `--tier-b` flag.
+tier-b = ["paperasse-privacy-core/tier-b"]
+
 [dependencies]
 paperasse-privacy-core = { workspace = true }
 anyhow = "1"

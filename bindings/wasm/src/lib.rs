@@ -17,12 +17,15 @@ use wasm_bindgen::prelude::*;
 /// client-side with no server round trip). Pass `markdown: true` to force
 /// markdown output. Pass `entities: ["FR_NIR"]` to redact only that entity
 /// type — matches Presidio's `analyzer_entities` filter; omit/`undefined`
-/// to redact every entity type Tier A's recognizers cover.
+/// to redact every entity type Tier A's recognizers cover. Pass
+/// `score_threshold: 0.95` to drop matches scoring below it — matches
+/// Presidio's own `score_threshold`.
 #[wasm_bindgen(js_name = redactText)]
 pub async fn redact_text(
     text: String,
     markdown: Option<bool>,
     entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
 ) -> Result<String, JsError> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
@@ -34,7 +37,12 @@ pub async fn redact_text(
         OutputFormat::Native
     };
     let result = engine
-        .process(Input::Text(text), format, entities.as_deref())
+        .process(
+            Input::Text(text),
+            format,
+            entities.as_deref(),
+            score_threshold,
+        )
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
     Ok(result.text.or(result.markdown).unwrap_or_default())

@@ -1,12 +1,12 @@
 use std::io::Cursor;
 
-use image::{ImageReader, Rgba, RgbaImage};
 #[cfg(not(target_arch = "wasm32"))]
 use image::ImageFormat;
-#[cfg(not(target_arch = "wasm32"))]
-use liteparse::LiteParse;
+use image::{ImageReader, Rgba, RgbaImage};
 #[cfg(not(target_arch = "wasm32"))]
 use liteparse::types::PdfInput;
+#[cfg(not(target_arch = "wasm32"))]
+use liteparse::LiteParse;
 #[cfg(not(target_arch = "wasm32"))]
 use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, RawImage, XObjectTransform};
 
@@ -39,7 +39,10 @@ const MASK_COLOR: Rgba<u8> = Rgba([0, 0, 0, 255]);
 /// Overlapping entities (e.g. Tier A and Tier B both matching over the same
 /// span) are merged first so a masked run is never double-processed.
 fn mask_text(text: &str, entities: &[Entity]) -> String {
-    let mut ranges: Vec<(usize, usize)> = entities.iter().map(|e| (e.span.start, e.span.end)).collect();
+    let mut ranges: Vec<(usize, usize)> = entities
+        .iter()
+        .map(|e| (e.span.start, e.span.end))
+        .collect();
     ranges.sort_unstable();
 
     let mut merged: Vec<(usize, usize)> = Vec::with_capacity(ranges.len());
@@ -67,7 +70,11 @@ fn mask_text(text: &str, entities: &[Entity]) -> String {
 /// document ingested without layout info (the anydoc path), and whenever
 /// `OutputFormat::Markdown` is requested regardless of the original input
 /// type.
-pub fn redact_text(doc: &ExtractedDocument, entities: &[Entity], format: OutputFormat) -> RedactionResult {
+pub fn redact_text(
+    doc: &ExtractedDocument,
+    entities: &[Entity],
+    format: OutputFormat,
+) -> RedactionResult {
     let redacted_text = mask_text(&doc.text, entities);
     let redacted_markdown = doc.markdown.as_deref().map(|md| mask_text(md, entities));
 
@@ -95,7 +102,12 @@ pub fn redact_text(doc: &ExtractedDocument, entities: &[Entity], format: OutputF
 /// one implicit page). `dpi_scale` converts a box from the 72-DPI viewport
 /// coordinates `WordBox`/`TextItem` use into the DPI the raster was
 /// rendered/decoded at (`rendered_dpi / 72.0`).
-fn draw_redaction_boxes(img: &mut RgbaImage, entities: &[Entity], page: Option<u32>, dpi_scale: f32) {
+fn draw_redaction_boxes(
+    img: &mut RgbaImage,
+    entities: &[Entity],
+    page: Option<u32>,
+    dpi_scale: f32,
+) {
     let (img_w, img_h) = img.dimensions();
     for e in entities {
         let Some(bbox) = e.bbox else { continue };
@@ -129,8 +141,8 @@ fn draw_redaction_boxes(img: &mut RgbaImage, entities: &[Entity], page: Option<u
 /// wrong for a camera photo. Flagged here rather than silently mispositioning
 /// redaction boxes.
 pub fn redact_image_bytes(bytes: &[u8], entities: &[Entity]) -> Result<Vec<u8>, EngineError> {
-    let format =
-        image::guess_format(bytes).map_err(|e| EngineError::Redact(format!("unrecognized image format: {e}")))?;
+    let format = image::guess_format(bytes)
+        .map_err(|e| EngineError::Redact(format!("unrecognized image format: {e}")))?;
     let decoded = ImageReader::with_format(Cursor::new(bytes), format)
         .decode()
         .map_err(|e| EngineError::Redact(format!("failed to decode image: {e}")))?;
@@ -172,7 +184,11 @@ pub fn redact_image_bytes(bytes: &[u8], entities: &[Entity]) -> Result<Vec<u8>, 
 /// redaction can (see `bindings/wasm`, which only exposes the text path
 /// for exactly this reason).
 #[cfg(not(target_arch = "wasm32"))]
-pub async fn redact_pdf_bytes(bytes: &[u8], entities: &[Entity], config: &liteparse::config::LiteParseConfig) -> Result<Vec<u8>, EngineError> {
+pub async fn redact_pdf_bytes(
+    bytes: &[u8],
+    entities: &[Entity],
+    config: &liteparse::config::LiteParseConfig,
+) -> Result<Vec<u8>, EngineError> {
     let parser = LiteParse::new(config.clone());
     let screenshots = parser
         .screenshot_input(PdfInput::Bytes(bytes.to_vec()), None)
@@ -186,16 +202,31 @@ pub async fn redact_pdf_bytes(bytes: &[u8], entities: &[Entity], config: &litepa
     for shot in screenshots {
         let decoded = ImageReader::with_format(Cursor::new(&shot.image_bytes), ImageFormat::Png)
             .decode()
-            .map_err(|e| EngineError::Redact(format!("failed to decode rendered page {}: {e}", shot.page_num)))?;
+            .map_err(|e| {
+                EngineError::Redact(format!(
+                    "failed to decode rendered page {}: {e}",
+                    shot.page_num
+                ))
+            })?;
         let mut rgba = decoded.to_rgba8();
         draw_redaction_boxes(&mut rgba, entities, Some(shot.page_num), dpi_scale);
 
         let mut png_bytes = Cursor::new(Vec::new());
         rgba.write_to(&mut png_bytes, ImageFormat::Png)
-            .map_err(|e| EngineError::Redact(format!("failed to re-encode redacted page {}: {e}", shot.page_num)))?;
+            .map_err(|e| {
+                EngineError::Redact(format!(
+                    "failed to re-encode redacted page {}: {e}",
+                    shot.page_num
+                ))
+            })?;
 
         let raw_image = RawImage::decode_from_bytes(&png_bytes.into_inner(), &mut Vec::new())
-            .map_err(|e| EngineError::Redact(format!("printpdf failed to load redacted page {}: {e}", shot.page_num)))?;
+            .map_err(|e| {
+                EngineError::Redact(format!(
+                    "printpdf failed to load redacted page {}: {e}",
+                    shot.page_num
+                ))
+            })?;
         let image_id = doc.add_image(&raw_image);
 
         let width_mm = Mm(shot.width as f32 / config.dpi * 25.4);
@@ -211,7 +242,9 @@ pub async fn redact_pdf_bytes(bytes: &[u8], entities: &[Entity], config: &litepa
     }
 
     let mut warnings = Vec::new();
-    Ok(doc.with_pages(pages).save(&PdfSaveOptions::default(), &mut warnings))
+    Ok(doc
+        .with_pages(pages)
+        .save(&PdfSaveOptions::default(), &mut warnings))
 }
 
 #[cfg(test)]
@@ -240,9 +273,15 @@ mod tests {
         let start = text.find(matched).expect("fixture contains the match");
         let redacted = mask_text(text, &[entity(start, start + matched.len())]);
 
-        assert_eq!(redacted, "mon numéro de sécurité sociale est █████████████████████");
+        assert_eq!(
+            redacted,
+            "mon numéro de sécurité sociale est █████████████████████"
+        );
         assert!(!redacted.contains(matched));
-        assert_eq!(redacted.chars().filter(|&c| c == MASK_CHAR).count(), matched.chars().count());
+        assert_eq!(
+            redacted.chars().filter(|&c| c == MASK_CHAR).count(),
+            matched.chars().count()
+        );
     }
 
     #[test]

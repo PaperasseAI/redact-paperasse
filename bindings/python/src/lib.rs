@@ -5,19 +5,22 @@ use pyo3::prelude::*;
 /// recognizers, no network call). Pass `markdown=True` to force markdown
 /// output. Pass `entities=["FR_NIR"]` to redact only that entity type —
 /// matches Presidio's `analyzer_entities` filter; omit/`None` to redact
-/// every entity type Tier A's recognizers cover.
+/// every entity type Tier A's recognizers cover. Pass
+/// `score_threshold=0.95` to drop matches scoring below it — matches
+/// Presidio's own `score_threshold`.
 ///
 /// Image/PDF redaction (`redact_image`/`redact_pdf`) is planned but not yet
 /// exposed at this binding layer; the underlying pipeline
 /// (`paperasse-privacy-core`'s `redact_image_bytes`/`redact_pdf_bytes`) is
 /// implemented and tested — see that crate.
 #[pyfunction]
-#[pyo3(signature = (text, markdown=false, entities=None))]
+#[pyo3(signature = (text, markdown=false, entities=None, score_threshold=None))]
 fn redact_text(
     py: Python<'_>,
     text: String,
     markdown: bool,
     entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
         let engine = Engine::default();
@@ -27,7 +30,12 @@ fn redact_text(
             OutputFormat::Native
         };
         let result = engine
-            .process(Input::Text(text), format, entities.as_deref())
+            .process(
+                Input::Text(text),
+                format,
+                entities.as_deref(),
+                score_threshold,
+            )
             .await
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(result.text.or(result.markdown).unwrap_or_default())
