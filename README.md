@@ -2,7 +2,7 @@
 
 A privacy engine for agents: image, PDF, or text in → redacted image, PDF, text, or (optionally) markdown out. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
-> **Status: scaffold.** The text-redaction path (ingest → Tier A detect → mask) is wired end to end and tested. Pixel redaction for images/PDFs (`redact::redact_image`) is a stub — see that function's doc comment for the concrete next steps. Nothing in this repo has been `cargo build`ed yet; see [Build status](#build-status) below.
+> **Status: early, but building.** `cargo test --workspace` passes (16 tests: FR_NIR/EMAIL_ADDRESS recognizers, text masking including a real French-accented regression case, and the end-to-end text pipeline). The full ingest → detect → redact pipeline is implemented for text, images, and PDFs — including pixel redaction and PDF reassembly, not just the text path. See [Build status](#build-status) for exactly what's compiler-verified vs. still needs a real document/runtime check.
 
 ## Architecture
 
@@ -53,7 +53,8 @@ crates/
 bindings/
   node/         napi-rs (@paperasse/privacy on npm)
   python/       PyO3 + maturin (paperasse-privacy on PyPI)
-  wasm/         wasm-bindgen, browser-only, UNVERIFIED (see its lib.rs)
+  wasm/         wasm-bindgen, browser-only — Tier A text redaction only,
+                see "Build status" for why pixel redaction can't exist here
 ```
 
 ## Adding a Tier A recognizer
@@ -62,12 +63,24 @@ Each recognizer is a self-contained module in `crates/recognizers/src/` implemen
 
 ## Build status
 
-No Rust toolchain was available in the environment this was scaffolded in, so **none of this has been compiled yet**. Known risk areas to check first, in order:
+Clean, zero warnings, on both targets that matter:
 
-1. `crates/core/src/ingest.rs`'s `LiteparseIngestor::ingest_image` — assumes liteparse's `PdfInput::Bytes` entry point also accepts a plain image (per its README/flowchart), routed through the same content-detection step PDFium needs. Confirm against the real crate.
-2. `crates/core/src/ingest.rs`'s word-box offset construction — builds its own joined text from `text_items` rather than trusting liteparse's own `result.text`/`page.text` join convention, specifically to keep span alignment guaranteed-correct; revisit if the extracted text quality matters more than that guarantee.
-3. `crates/core/src/redact.rs`'s `mask_text` — masks by `char` index against byte-offset spans; correct for every Tier A recognizer today (ASCII: digits, `@`, `.`) but will misalign on a span inside a multi-byte UTF-8 run.
-4. `bindings/wasm` — depends on `paperasse-privacy-core`, which pulls in both `anydoc` and `liteparse` unconditionally; neither has been checked against `wasm32-unknown-unknown` in this combination yet.
+- `cargo check --workspace` and `cargo test --workspace` — native host (macOS arm64): core, recognizers, CLI, and all three binding crates. **16/16 tests pass.**
+- `cargo check --target wasm32-unknown-unknown -p paperasse-privacy-wasm` — the browser binding, checked against the actual wasm32 target, not just the host target `cargo check --workspace` alone would validate.
+
+This is real, not aspirational — getting here caught and fixed several genuine bugs, not just typos:
+
+1. A byte-offset-vs-char-index bug in `mask_text` (was collecting into a `Vec<char>` while spans are byte offsets from `regex`) — caught by the FR_NIR recognizer's own "found within surrounding French text" test, where three accented characters shifted every mask out of position. Fixed to slice `&str` directly; regression tests added in `redact.rs`.
+2. An ingestion-routing gap: a PDF with a real text layer went through anydoc (fast, but produces no bounding boxes and can't see PII inside embedded images), while `OutputFormat::Native` output always tried to draw boxes — meaning PII correctly *detected* via the text path was silently never *redacted* in the pixel output. Fixed: `Ingestor::ingest` takes a `needs_boxes` hint now; any `OutputFormat::Native` PDF always routes through liteparse regardless of whether it has a text layer, and `AnydocIngestor` actively refuses (`EngineError::Unsupported`) rather than silently under-redact.
+3. printpdf 0.9.1's real `PdfDocument::save` signature (needs a `&mut Vec<PdfWarnMsg>` the docs example omits).
+4. liteparse 2.11.1 itself doesn't compile cleanly for `wasm32` with default features (an unconditional `use` of a module that's correctly `wasm32`-gated at declaration, but not at the import site) — worked around via a workspace-inheritance-correct feature split (native builds opt into `tesseract` explicitly; wasm32 gets liteparse's bare default).
+5. **A real upstream constraint, not a bug**: `LiteParse::screenshot_input` — which `redact_pdf_bytes` depends on for pixel-level PDF redaction — doesn't exist in liteparse's wasm32 build at all (no PDFium-to-raster path there). So pixel-level PDF/image redaction is `#[cfg(not(target_arch = "wasm32"))]`-gated; the wasm32 binding only exposes Tier A text redaction, which is what actually runs client-side in a browser anyway.
+
+What a type check *can't* validate — still needs a real document, not just a compiler:
+
+1. `LiteparseIngestor::ingest_image` — assumes liteparse's `PdfInput::Bytes` entry point accepts a plain image per its README/flowchart. Compiles; not run against a real image yet.
+2. The DPI assumption in `redact_image_bytes` (hardcoded to liteparse's default 150, not derived from the actual OCR call) — likely wrong for a real photo, would misplace redaction boxes.
+3. The `XObjectTransform`/page-sizing math in `redact_pdf_bytes` — compiles against printpdf 0.9.1's real API, but whether each page image lands scaled/positioned correctly on its `PdfPage` hasn't been checked against an actual rendered PDF.
 
 ## License
 

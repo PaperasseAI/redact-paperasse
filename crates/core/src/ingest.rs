@@ -5,7 +5,15 @@ use crate::types::{BoundingBox, ExtractedDocument, Input, Span, WordBox};
 
 #[async_trait]
 pub trait Ingestor: Send + Sync {
-    async fn ingest(&self, input: &Input) -> Result<ExtractedDocument, EngineError>;
+    /// `needs_boxes` is true whenever the caller is going to redact pixels
+    /// afterward (`OutputFormat::Native` for a `Pdf`/`Image` input) — it's
+    /// not just a performance hint, it changes which library is safe to
+    /// use at all. anydoc never produces bounding boxes and is blind to
+    /// PII hidden inside an embedded image (it extracts document
+    /// structure, not raster content), so it must never be the ingest
+    /// path when the output needs pixel-accurate redaction — see
+    /// `DefaultIngestor::ingest` for how that's enforced.
+    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError>;
 }
 
 /// Routes anydoc (office formats + text-based PDFs — no OCR, no bounding
@@ -25,17 +33,28 @@ pub struct DefaultIngestor {
 
 #[async_trait]
 impl Ingestor for DefaultIngestor {
-    async fn ingest(&self, input: &Input) -> Result<ExtractedDocument, EngineError> {
+    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
         match input {
             Input::Text(text) => Ok(ExtractedDocument {
                 text: text.clone(),
                 ..Default::default()
             }),
             Input::Pdf(bytes) => {
-                // Try anydoc's fast text-layer path first; a scanned/image-only
-                // PDF comes back empty (or Unsupported), so fall back to
-                // liteparse's PDFium+OCR path — also the only path that
-                // yields bounding boxes for redaction placement.
+                if needs_boxes {
+                    // Pixel-accurate output was requested. Always route through
+                    // liteparse here, text layer or not: it's the only path that
+                    // yields coordinates to place redaction boxes AND the only
+                    // path that OCRs PII hidden inside an embedded image (a
+                    // scanned ID pasted into an otherwise-typed page) regardless
+                    // of whether the surrounding page has its own text layer.
+                    // anydoc can't see embedded-image content at all — using it
+                    // here would mean such PII is never even detected, not just
+                    // never redacted.
+                    return self.liteparse.ingest_pdf(bytes).await;
+                }
+                // No boxes needed (Markdown/text output): anydoc's fast,
+                // no-native-binary path is fine whenever there's a real text
+                // layer; fall back to liteparse's OCR only when there isn't one.
                 match anydoc::to_markdown_bytes(bytes, anydoc::Format::Pdf) {
                     Ok(markdown) if !markdown.trim().is_empty() => Ok(ExtractedDocument {
                         text: markdown.clone(),
@@ -58,7 +77,7 @@ pub struct AnydocIngestor;
 
 #[async_trait]
 impl Ingestor for AnydocIngestor {
-    async fn ingest(&self, input: &Input) -> Result<ExtractedDocument, EngineError> {
+    async fn ingest(&self, input: &Input, needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
         let (bytes, format): (&[u8], Option<anydoc::Format>) = match input {
             Input::Text(text) => {
                 return Ok(ExtractedDocument {
@@ -66,7 +85,21 @@ impl Ingestor for AnydocIngestor {
                     ..Default::default()
                 });
             }
-            Input::Pdf(bytes) => (bytes, Some(anydoc::Format::Pdf)),
+            Input::Pdf(bytes) => {
+                if needs_boxes {
+                    // See the trait doc comment: anydoc structurally can't
+                    // provide boxes and can't see embedded-image content, so
+                    // it must refuse rather than silently produce an
+                    // unredacted result. Use DefaultIngestor or
+                    // LiteparseIngestor directly for pixel-accurate output.
+                    return Err(EngineError::Unsupported(
+                        "AnydocIngestor cannot produce bounding boxes; it must not be used \
+                         when the output needs pixel-level redaction"
+                            .into(),
+                    ));
+                }
+                (bytes, Some(anydoc::Format::Pdf))
+            }
             Input::Image { .. } => {
                 return Err(EngineError::Unsupported(
                     "anydoc does not read raster images; use the liteparse ingest path".into(),
@@ -109,13 +142,13 @@ impl LiteparseIngestor {
     }
 
     pub async fn ingest_image(&self, bytes: &[u8]) -> Result<ExtractedDocument, EngineError> {
-        // NOTE(build-validation): liteparse's public entry point is typed
-        // `PdfInput`, but its own README/flowchart list plain images as a
-        // supported input format — presumably routed through the same
-        // PDFium conversion step via content-based format detection.
-        // Confirm this the first time the workspace builds (see the
-        // "install Rust + cargo check" task); split this into its own call
-        // if images actually need a distinct entry point.
+        // NOTE(runtime-validation): this compiles — `PdfInput::Bytes` is
+        // typed to accept any bytes — but whether liteparse's internal
+        // content-based format detection actually routes a plain image
+        // through the same PDFium conversion step (per its README/
+        // flowchart) rather than erroring is a runtime question a type
+        // check can't answer. Verify against a real image once there's a
+        // way to run the CLI/tests, not just `cargo check`.
         self.parse(bytes).await
     }
 
@@ -165,5 +198,22 @@ impl LiteparseIngestor {
             word_boxes,
             page_count: result.pages.len() as u32,
         })
+    }
+}
+
+#[async_trait]
+impl Ingestor for LiteparseIngestor {
+    /// Ignores `needs_boxes` — this is the path a caller reaches for
+    /// specifically because it always produces boxes (and OCRs embedded
+    /// images), so there's nothing to change behavior on.
+    async fn ingest(&self, input: &Input, _needs_boxes: bool) -> Result<ExtractedDocument, EngineError> {
+        match input {
+            Input::Text(text) => Ok(ExtractedDocument {
+                text: text.clone(),
+                ..Default::default()
+            }),
+            Input::Pdf(bytes) => self.ingest_pdf(bytes).await,
+            Input::Image { bytes, .. } => self.ingest_image(bytes).await,
+        }
     }
 }

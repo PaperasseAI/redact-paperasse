@@ -22,14 +22,28 @@ tier-b = ["dep:reqwest"]
 [dependencies]
 paperasse-privacy-recognizers = { workspace = true, optional = true }
 anydoc = { workspace = true }
-liteparse = { workspace = true }
 async-trait = "0.1"
 image = { version = "0.25", default-features = false, features = ["default-formats"] }
+printpdf = { version = "0.9", default-features = false, features = ["png"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+
+# liteparse's `tesseract` feature (bundled OCR) pulls in a native C++ build
+# (Tesseract + Leptonica via CMake) that doesn't exist on wasm32 — its own
+# module for this is correctly `cfg(not(target_arch = "wasm32"))`-gated,
+# but as of liteparse 2.11.1 an unconditional `use` of it in parser.rs
+# isn't, so wasm32 fails to compile if the feature is on. The workspace
+# baseline (see root Cargo.toml) turns it off; non-wasm32 targets add it
+# back here (OCR isn't reachable on wasm32 anyway — see redact.rs's
+# wasm32 gate on `redact_pdf_bytes`, the only thing that needs it).
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+liteparse = { workspace = true, features = ["tesseract"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+liteparse = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

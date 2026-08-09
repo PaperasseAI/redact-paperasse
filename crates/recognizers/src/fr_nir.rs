@@ -121,9 +121,14 @@ mod tests {
 
     #[test]
     fn found_within_surrounding_text() {
+        // Byte offsets, not char offsets: "numéro"/"sécurité" contribute
+        // three 2-byte UTF-8 characters before the match, so this starts
+        // three bytes later than a naive char-count would suggest — the
+        // same distinction that motivated fixing `redact::mask_text` to
+        // work on byte spans directly instead of a `Vec<char>`.
         assert_eq!(
             spans("mon numéro de sécurité sociale est 2 91 05 99 338 076 92"),
-            vec![(35, 56)]
+            vec![(38, 59)]
         );
     }
 

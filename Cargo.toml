@@ -12,14 +12,21 @@ members = [
 [workspace.package]
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/retnan/paperasse-privacy"
+repository = "https://github.com/PaperasseAI/paperasse-privacy"
 version = "0.1.0"
 
 [workspace.dependencies]
 paperasse-privacy-core = { path = "crates/core", version = "0.1.0" }
 paperasse-privacy-recognizers = { path = "crates/recognizers", version = "0.1.0" }
 anydoc = "0.1.7"
-liteparse = "2.11.1"
+# default-features = false here, not true: Cargo's workspace-inheritance
+# only allows a member to override `default-features` DOWNWARD (off) if the
+# workspace baseline is already off — a member can't turn a workspace-true
+# default back off. So the baseline excludes liteparse's only default
+# feature (`tesseract`, a native CMake C++ build of Tesseract+Leptonica
+# that doesn't target wasm32), and crates/core's non-wasm32 target adds it
+# back explicitly via `features = ["tesseract"]` (see that Cargo.toml).
+liteparse = { version = "2.11.1", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
