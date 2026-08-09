@@ -1,0 +1,35 @@
+[package]
+name = "paperasse-privacy-core"
+description = "Ingest -> detect -> redact pipeline: image/PDF/text in, redacted image/PDF/text/markdown out"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lib]
+name = "paperasse_privacy_core"
+
+[features]
+default = ["tier-a"]
+# Tier A: in-process regex+checksum recognizers. On by default — this is the
+# whole point of running as a native binding instead of calling a REST API.
+tier-a = ["dep:paperasse-privacy-recognizers"]
+# Tier B: optional deeper NER pass over a Presidio REST deployment. Off by
+# default so the default build has zero network dependency; enable it only
+# when broader (name/location/context-dependent) coverage is worth the hop.
+tier-b = ["dep:reqwest"]
+
+[dependencies]
+paperasse-privacy-recognizers = { workspace = true, optional = true }
+anydoc = { workspace = true }
+liteparse = { workspace = true }
+async-trait = "0.1"
+image = { version = "0.25", default-features = false, features = ["default-formats"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

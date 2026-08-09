@@ -1,0 +1,10 @@
+/target
+node_modules/
+*.node
+*.wasm
+dist/
+__pycache__/
+*.egg-info/
+.venv/
+*.pyc
+.DS_Store

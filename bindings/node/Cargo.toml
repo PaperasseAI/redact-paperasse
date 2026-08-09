@@ -1,0 +1,19 @@
+[package]
+name = "paperasse-privacy-node"
+description = "Node.js bindings for paperasse-privacy"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+paperasse-privacy-core = { workspace = true }
+napi = { version = "2", default-features = false, features = ["napi4", "async"] }
+napi-derive = "2"
+tokio = { workspace = true, features = ["rt-multi-thread"] }
+
+[build-dependencies]
+napi-build = "2"

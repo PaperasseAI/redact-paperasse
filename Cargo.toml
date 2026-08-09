@@ -1,0 +1,31 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/recognizers",
+    "crates/cli",
+    "bindings/node",
+    "bindings/python",
+    "bindings/wasm",
+]
+
+[workspace.package]
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/retnan/paperasse-privacy"
+version = "0.1.0"
+
+[workspace.dependencies]
+paperasse-privacy-core = { path = "crates/core", version = "0.1.0" }
+paperasse-privacy-recognizers = { path = "crates/recognizers", version = "0.1.0" }
+anydoc = "0.1.7"
+liteparse = "2.11.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+regex = "1"
+tokio = { version = "1", features = ["rt", "macros"] }
+
+[profile.release]
+lto = "thin"
+strip = "symbols"

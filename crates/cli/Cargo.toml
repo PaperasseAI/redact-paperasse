@@ -1,0 +1,18 @@
+[package]
+name = "paperasse-privacy-cli"
+description = "CLI for paperasse-privacy: redact PII from images, PDFs, and text"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "ppr"
+path = "src/main.rs"
+
+[dependencies]
+paperasse-privacy-core = { workspace = true }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs"] }
