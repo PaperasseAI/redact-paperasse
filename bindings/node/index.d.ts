@@ -20,10 +20,48 @@ export interface RedactTextOptions {
   scoreThreshold?: number
 }
 /**
+ * Options for `redactImage`/`redactPdf`. Same filters as `RedactTextOptions`
+ * minus `markdown` — these two always return pixel-redacted bytes (that's
+ * the point of calling them specifically); OCR'd-and-redacted markdown
+ * text from an image/PDF isn't exposed at this binding layer yet.
+ */
+export interface RedactBytesOptions {
+  /**
+   * Only redact these entity types (e.g. `["FR_NIR"]`) — matches
+   * Presidio's `analyzer_entities` filter. Omit/undefined to redact
+   * every entity type Tier A's recognizers cover.
+   */
+  entities?: Array<string>
+  /**
+   * Drop matches scoring below this (0.0-1.0). Matches Presidio's
+   * `score_threshold`. Omit/undefined for no filtering.
+   */
+  scoreThreshold?: number
+}
+/**
  * Redact PII from plain text — the fastest path (Tier A, in-process, no
- * network). Image/PDF redaction (`redactImage`/`redactPdf`) is planned but
- * not yet exposed at this binding layer; the underlying pipeline
- * (`paperasse-privacy-core`'s `redact_image_bytes`/`redact_pdf_bytes`) is
- * implemented and tested — see that crate.
+ * network).
  */
 export declare function redactText(text: string, options?: RedactTextOptions | undefined | null): Promise<string>
+/**
+ * Redact PII from a plain image (jpg/png/…): OCR it (liteparse, bundled
+ * Tesseract or a configured HTTP OCR server), find PII in the OCR'd text
+ * via Tier A, and black out each match's bounding box directly on the
+ * original pixels. Returns the redacted image bytes, same format as the
+ * input. Verified against a real photographed document — see the repo
+ * README's "Build status" section.
+ */
+export declare function redactImage(bytes: Buffer, options?: RedactBytesOptions | undefined | null): Promise<Buffer>
+/**
+ * Redact PII from a PDF: render every page (liteparse/PDFium), find PII
+ * via OCR + Tier A, black out matches, and reassemble a new PDF from the
+ * redacted page images (`printpdf`). Deliberately flattens to an
+ * image-based PDF — see `redact_pdf_bytes`'s doc comment in
+ * `paperasse-privacy-core` for why that's the correct behavior for
+ * genuine redaction, not a limitation. Verified against a real document
+ * embedded in a PDF — see the repo README's "Build status" section.
+ *
+ * Not available in the WASM binding: liteparse's PDF-to-raster rendering
+ * doesn't exist in its wasm32 build (an upstream constraint).
+ */
+export declare function redactPdf(bytes: Buffer, options?: RedactBytesOptions | undefined | null): Promise<Buffer>

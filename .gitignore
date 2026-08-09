@@ -1,5 +1,6 @@
 /target
 /test-assets
+bindings/node/fixtures/*.redacted.*
 node_modules/
 *.node
 *.wasm

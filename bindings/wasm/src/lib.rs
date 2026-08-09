@@ -47,3 +47,39 @@ pub async fn redact_text(
         .map_err(|e| JsError::new(&e.to_string()))?;
     Ok(result.text.or(result.markdown).unwrap_or_default())
 }
+
+/// Redact PII from a plain image (jpg/png/…): OCR it, find PII via Tier A,
+/// and black out each match's bounding box directly on the original
+/// pixels. Returns the redacted image bytes, same format as the input.
+/// Verified against a real photographed document (native build) — see the
+/// repo README's "Build status" section; the wasm32 OCR path itself
+/// (liteparse's pluggable OCR — bundled Tesseract is unavailable here, so
+/// this needs `ocr_server_url` configured, which isn't exposed at this
+/// binding layer yet) hasn't been separately verified in-browser.
+///
+/// No `redactPdf` here: liteparse's PDF-to-raster rendering
+/// (`screenshot_input`) doesn't exist in its wasm32 build at all — a real
+/// upstream constraint, not a choice made here (see `paperasse-privacy-core`).
+#[wasm_bindgen(js_name = redactImage)]
+pub async fn redact_image(
+    bytes: Vec<u8>,
+    entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
+) -> Result<Vec<u8>, JsError> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    let engine = Engine::default();
+    let result = engine
+        .process(
+            Input::Image(bytes),
+            OutputFormat::Native,
+            entities.as_deref(),
+            score_threshold,
+        )
+        .await
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    result
+        .bytes
+        .ok_or_else(|| JsError::new("Engine::process returned no bytes for an Image input"))
+}
