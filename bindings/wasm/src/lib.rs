@@ -1,11 +1,13 @@
-//! Browser bindings. UNVERIFIED (see repo README's build-status note): both
-//! `anydoc` and `liteparse` ship their own `wasm` binding crates, implying
-//! their core crates are wasm32-compatible — but this crate depends on
-//! `paperasse-privacy-core`, which pulls both in unconditionally, and that
-//! combination hasn't been target-checked yet. Run
+//! Browser bindings. Verified against the real target:
 //! `cargo check --target wasm32-unknown-unknown -p paperasse-privacy-wasm`
-//! once a toolchain is available and fix whatever it finds before relying
-//! on this.
+//! passes clean (zero warnings) — see the repo README's "Build status" for
+//! what that took (a Cargo workspace-inheritance fix so liteparse's
+//! `tesseract` feature, which doesn't target wasm32, is off by default
+//! here; `redact_pdf_bytes` is `#[cfg(not(target_arch = "wasm32"))]`-gated
+//! in the core crate since liteparse's own `screenshot_input` doesn't exist
+//! on wasm32 either — a real upstream constraint, not a choice made here).
+//! This binding therefore only exposes Tier A text redaction, which is
+//! exactly what runs client-side in a browser anyway.
 
 use paperasse_privacy_core::{Engine, Input, OutputFormat};
 use wasm_bindgen::prelude::*;
@@ -13,9 +15,15 @@ use wasm_bindgen::prelude::*;
 /// Redact PII from plain text (Tier A: in-process regex+checksum
 /// recognizers — the whole point of a WASM build, since it runs entirely
 /// client-side with no server round trip). Pass `markdown: true` to force
-/// markdown output.
+/// markdown output. Pass `entities: ["FR_NIR"]` to redact only that entity
+/// type — matches Presidio's `analyzer_entities` filter; omit/`undefined`
+/// to redact every entity type Tier A's recognizers cover.
 #[wasm_bindgen(js_name = redactText)]
-pub async fn redact_text(text: String, markdown: Option<bool>) -> Result<String, JsError> {
+pub async fn redact_text(
+    text: String,
+    markdown: Option<bool>,
+    entities: Option<Vec<String>>,
+) -> Result<String, JsError> {
     #[cfg(feature = "console_error_panic_hook")]
     console_error_panic_hook::set_once();
 
@@ -26,7 +34,7 @@ pub async fn redact_text(text: String, markdown: Option<bool>) -> Result<String,
         OutputFormat::Native
     };
     let result = engine
-        .process(Input::Text(text), format)
+        .process(Input::Text(text), format, entities.as_deref())
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
     Ok(result.text.or(result.markdown).unwrap_or_default())

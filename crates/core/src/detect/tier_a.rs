@@ -23,16 +23,30 @@ impl Default for TierA {
 }
 
 impl TierA {
-    pub fn analyze(&self, doc: &ExtractedDocument) -> Vec<Entity> {
-        let mut entities = Vec::new();
+    /// `entities` mirrors Presidio's `analyzer_entities`/`entities` filter:
+    /// `None` runs every registered recognizer (the default); `Some(list)`
+    /// runs only the recognizers whose `entity_type()` appears in `list`
+    /// (e.g. `["FR_NIR"]` to redact only the NIR and leave emails/etc.
+    /// untouched — see this session's Presidio testing for why that
+    /// matters: a policy like "identifiers are fine, financial secrets
+    /// aren't" needs per-entity-type selection, not all-or-nothing).
+    /// Unrecognized names in the filter are silently ignored, same as
+    /// Presidio does for an unknown entity type.
+    pub fn analyze(&self, doc: &ExtractedDocument, entities: Option<&[String]>) -> Vec<Entity> {
+        let mut out = Vec::new();
         for recognizer in &self.recognizers {
+            if let Some(wanted) = entities {
+                if !wanted.iter().any(|e| e == recognizer.entity_type()) {
+                    continue;
+                }
+            }
             for m in recognizer.analyze(&doc.text) {
                 let bbox = doc
                     .word_boxes
                     .iter()
                     .find(|wb| wb.span.start <= m.start && m.end <= wb.span.end)
                     .map(|wb| wb.bbox);
-                entities.push(Entity {
+                out.push(Entity {
                     entity_type: recognizer.entity_type().to_string(),
                     span: Span {
                         start: m.start,
@@ -44,6 +58,6 @@ impl TierA {
                 });
             }
         }
-        entities
+        out
     }
 }

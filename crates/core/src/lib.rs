@@ -82,13 +82,23 @@ impl Engine {
     /// `OutputFormat::Native` mirrors the input's own type (redacted image
     /// stays an image, redacted PDF stays a PDF); `OutputFormat::Markdown`
     /// forces structured markdown output regardless of input type.
-    pub async fn process(&self, input: Input, format: OutputFormat) -> Result<RedactionResult, EngineError> {
+    ///
+    /// `entities` mirrors Presidio's `analyzer_entities` filter: `None`
+    /// redacts everything Tier A can find; `Some(&["FR_NIR".into()])`
+    /// redacts only that entity type and leaves everything else (an email,
+    /// say) untouched — see `detect::TierA::analyze`'s doc comment.
+    pub async fn process(
+        &self,
+        input: Input,
+        format: OutputFormat,
+        entities: Option<&[String]>,
+    ) -> Result<RedactionResult, EngineError> {
         // Only a Native-format Pdf/Image needs pixel coordinates out of
         // ingestion — Text never does, and Markdown output never does
         // regardless of input type (see `Ingestor::ingest`'s doc comment).
         let needs_boxes = format == OutputFormat::Native && !matches!(input, Input::Text(_));
         let doc = self.ingestor.ingest(&input, needs_boxes).await?;
-        let entities = self.tier_a.analyze(&doc);
+        let entities = self.tier_a.analyze(&doc, entities);
 
         if format == OutputFormat::Markdown {
             return Ok(redact::redact_text(&doc, &entities, format));
@@ -149,6 +159,7 @@ mod tests {
             .process(
                 Input::Text("mon NIR est 291059933807692, merci.".to_string()),
                 OutputFormat::Native,
+                None,
             )
             .await
             .expect("text pipeline never hits the unimplemented pixel path");
@@ -156,5 +167,28 @@ mod tests {
         assert_eq!(result.entities.len(), 1);
         assert_eq!(result.entities[0].entity_type, "FR_NIR");
         assert!(!result.text.unwrap().contains("291059933807692"));
+    }
+
+    #[tokio::test]
+    async fn entities_filter_redacts_only_the_requested_type() {
+        let engine = Engine::default();
+        let text = "email: john@example.com, nir: 291059933807692".to_string();
+
+        let filtered = engine
+            .process(
+                Input::Text(text.clone()),
+                OutputFormat::Native,
+                Some(&["FR_NIR".to_string()]),
+            )
+            .await
+            .unwrap();
+        assert_eq!(filtered.entities.len(), 1);
+        assert_eq!(filtered.entities[0].entity_type, "FR_NIR");
+        let redacted = filtered.text.unwrap();
+        assert!(redacted.contains("john@example.com")); // untouched — not in the filter
+        assert!(!redacted.contains("291059933807692"));
+
+        let unfiltered = engine.process(Input::Text(text), OutputFormat::Native, None).await.unwrap();
+        assert_eq!(unfiltered.entities.len(), 2); // both FR_NIR and EMAIL_ADDRESS
     }
 }

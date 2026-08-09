@@ -27,6 +27,12 @@ struct Cli {
     /// itself) as JSON to stderr — an audit trail of what was redacted.
     #[arg(long)]
     report: bool,
+
+    /// Only redact these entity types (comma-separated, e.g.
+    /// `--entities FR_NIR,EMAIL_ADDRESS`). Matches Presidio's
+    /// `analyzer_entities` filter. Defaults to every registered recognizer.
+    #[arg(long, value_delimiter = ',')]
+    entities: Option<Vec<String>>,
 }
 
 #[derive(Clone, ValueEnum)]
@@ -72,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let engine = Engine::default();
-    let result = engine.process(input, format).await?;
+    let result = engine.process(input, format, cli.entities.as_deref()).await?;
 
     if cli.report {
         eprintln!("{}", serde_json::to_string_pretty(&result.entities)?);
