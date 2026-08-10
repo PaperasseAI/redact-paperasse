@@ -3,6 +3,16 @@ use async_trait::async_trait;
 use crate::error::EngineError;
 use crate::types::{BoundingBox, DocumentFormat, ExtractedDocument, Input, Span, WordBox};
 
+/// Viewport units per image pixel. liteparse reports boxes for a plain
+/// image in 72-DPI units under a fixed 150-DPI assumption, regardless of
+/// the image's own dimensions — verified empirically by halving an image
+/// and observing every coordinate halve exactly. Deliberately NOT tied to
+/// `LiteParseConfig::dpi`: that setting only affects PDF page
+/// rasterization, so keying off it would misplace boxes on images the
+/// moment anyone changed it.
+pub(crate) const IMAGE_OCR_DPI: f32 = 150.0;
+const UNITS_PER_PIXEL: f32 = 72.0 / IMAGE_OCR_DPI;
+
 impl From<DocumentFormat> for anydoc::Format {
     fn from(format: DocumentFormat) -> Self {
         match format {
@@ -207,6 +217,99 @@ impl LiteparseIngestor {
         // check can't answer. Verify against a real image once there's a
         // way to run the CLI/tests, not just `cargo check`.
         self.parse(bytes).await
+    }
+
+    /// OCR the image again in an overlapping grid of tiles, and return the
+    /// merged result in FULL-IMAGE coordinates.
+    ///
+    /// Why this exists: Tesseract's page segmentation, not its resolution,
+    /// is what loses small print. On a real scanned URSSAF letter carrying
+    /// the same NIR twice, a single full-page pass reads the large one and
+    /// never emits the small one in the detachable coupon at all — the text
+    /// never reaches the recognizer, so no amount of recognizer tuning helps.
+    /// The identical pixels, cropped, read fine. Re-running on tiles gives
+    /// the segmenter a simpler page each time.
+    ///
+    /// Tiles overlap so an identifier straddling a cut is still wholly
+    /// inside at least one tile. Duplicate detections across the overlap are
+    /// expected and harmless for pixel redaction (the same box drawn twice
+    /// is the same pixels); `Engine::process` dedupes by box before
+    /// reporting.
+    pub async fn ingest_image_tiled(
+        &self,
+        bytes: &[u8],
+        grid: u32,
+        overlap: f32,
+    ) -> Result<ExtractedDocument, EngineError> {
+        use std::io::Cursor;
+
+        let decoded = image::ImageReader::new(Cursor::new(bytes))
+            .with_guessed_format()
+            .map_err(|e| EngineError::Ingest(format!("unreadable image: {e}")))?
+            .decode()
+            .map_err(|e| EngineError::Ingest(format!("failed to decode image: {e}")))?;
+
+        let (w, h) = (decoded.width(), decoded.height());
+        let grid = grid.max(1);
+        let tile_w = w / grid;
+        let tile_h = h / grid;
+        let pad_x = (tile_w as f32 * overlap) as u32;
+        let pad_y = (tile_h as f32 * overlap) as u32;
+
+        let mut text = String::new();
+        let mut word_boxes: Vec<WordBox> = Vec::new();
+
+        for row in 0..grid {
+            for col in 0..grid {
+                let x0 = (col * tile_w).saturating_sub(pad_x);
+                let y0 = (row * tile_h).saturating_sub(pad_y);
+                let x1 = ((col + 1) * tile_w + pad_x).min(w);
+                let y1 = ((row + 1) * tile_h + pad_y).min(h);
+                if x1 <= x0 || y1 <= y0 {
+                    continue;
+                }
+
+                let tile = decoded.crop_imm(x0, y0, x1 - x0, y1 - y0);
+                let mut buf = Cursor::new(Vec::new());
+                tile.write_to(&mut buf, image::ImageFormat::Png)
+                    .map_err(|e| EngineError::Ingest(format!("failed to encode tile: {e}")))?;
+
+                let Ok(tile_doc) = self.parse(&buf.into_inner()).await else {
+                    // One unreadable tile must not sink the whole pass —
+                    // the other tiles (and the full-page pass this is
+                    // merged with) still contribute.
+                    continue;
+                };
+
+                // Offsets: liteparse reports image boxes in 72-DPI-equivalent
+                // units at a FIXED 150-DPI assumption, independent of the
+                // image's own size — verified by halving an image and seeing
+                // every coordinate halve exactly. So a tile's pixel origin
+                // converts to those units by px * 72/150.
+                let base = text.len();
+                for wb in tile_doc.word_boxes {
+                    let mut b = wb.bbox;
+                    b.x += x0 as f32 * UNITS_PER_PIXEL;
+                    b.y += y0 as f32 * UNITS_PER_PIXEL;
+                    word_boxes.push(WordBox {
+                        span: Span {
+                            start: base + wb.span.start,
+                            end: base + wb.span.end,
+                        },
+                        bbox: b,
+                    });
+                }
+                text.push_str(&tile_doc.text);
+                text.push('\n');
+            }
+        }
+
+        Ok(ExtractedDocument {
+            text,
+            markdown: None,
+            word_boxes,
+            page_count: 1,
+        })
     }
 
     async fn parse(&self, bytes: &[u8]) -> Result<ExtractedDocument, EngineError> {

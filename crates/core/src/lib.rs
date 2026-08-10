@@ -46,6 +46,40 @@ use ingest::{DefaultIngestor, Ingestor};
 /// Tier A's, and call the `redact` module's functions directly when broader
 /// NER coverage is worth the extra hop than this convenience wrapper
 /// provides.
+/// Default NxN tile grid for the supplementary image OCR pass. 2 keeps the
+/// added latency to roughly one extra full-image pass while already
+/// recovering the small-print case that motivated it; 1 disables it.
+pub const DEFAULT_OCR_TILING: u32 = 2;
+
+/// Merge `extra` into `found`, dropping anything whose box substantially
+/// overlaps a box already present for the same entity type. The tiled pass
+/// re-reads overlap regions by design, so the same identifier legitimately
+/// arrives more than once; without this the report would list it twice.
+/// Drawing is idempotent either way -- this is about not lying in
+/// `--report` about how many distinct things were found.
+fn merge_by_box(found: &mut Vec<Entity>, extra: Vec<Entity>) {
+    for e in extra {
+        let Some(nb) = e.bbox else { continue };
+        let dup = found.iter().any(|f| match f.bbox {
+            Some(b) => {
+                f.entity_type == e.entity_type
+                    && b.page == nb.page
+                    // Centre of one inside the other is a robust enough
+                    // test here: tiles shift a box by sub-pixel rounding,
+                    // never by a whole field.
+                    && (nb.x + nb.width / 2.0) >= b.x
+                    && (nb.x + nb.width / 2.0) <= b.x + b.width
+                    && (nb.y + nb.height / 2.0) >= b.y
+                    && (nb.y + nb.height / 2.0) <= b.y + b.height
+            }
+            None => false,
+        });
+        if !dup {
+            found.push(e);
+        }
+    }
+}
+
 pub struct Engine {
     ingestor: Box<dyn Ingestor>,
     tier_a: TierA,
@@ -57,6 +91,8 @@ pub struct Engine {
     // place a caller can set this, which threads one config through both
     // instead of the two being independently constructed.
     liteparse_config: liteparse::config::LiteParseConfig,
+    /// NxN overlapping-tile OCR grid for images; 1 disables the extra pass.
+    ocr_tiling: u32,
 }
 
 impl Default for Engine {
@@ -77,6 +113,7 @@ impl Engine {
             ingestor,
             tier_a: TierA::default(),
             liteparse_config: liteparse::config::LiteParseConfig::default(),
+            ocr_tiling: DEFAULT_OCR_TILING,
         }
     }
 
@@ -91,6 +128,7 @@ impl Engine {
             ingestor: Box::new(DefaultIngestor::with_liteparse_config(config.clone())),
             tier_a: TierA::default(),
             liteparse_config: config,
+            ocr_tiling: DEFAULT_OCR_TILING,
         }
     }
 
@@ -134,7 +172,31 @@ impl Engine {
         let needs_boxes =
             format == OutputFormat::Native && matches!(input, Input::Pdf(_) | Input::Image(_));
         let doc = self.ingestor.ingest(&input, needs_boxes).await?;
-        let entities = self.tier_a.analyze(&doc, entities, score_threshold);
+        let mut found = self.tier_a.analyze(&doc, entities, score_threshold);
+
+        // A single full-page OCR pass reliably reads large print and can
+        // miss small print entirely -- not because of resolution, but
+        // because Tesseract's page segmentation never isolates a dense
+        // little block on a busy page, so that text is never produced at
+        // all. Verified on a real scanned letter carrying the same NIR
+        // twice: the full page found 1 of 2, while the identical pixels
+        // cropped found the missing one every time.
+        //
+        // So for pixel redaction, OCR the image a second time in
+        // overlapping tiles and merge. Missing PII is the worst failure
+        // this tool has, which is what justifies the extra pass; it only
+        // runs when boxes are actually needed (Native output for an image),
+        // never on the text/markdown path.
+        if needs_boxes && self.ocr_tiling > 1 {
+            if let Input::Image(ref bytes) = input {
+                let tiler = ingest::LiteparseIngestor::with_config(self.liteparse_config.clone());
+                if let Ok(tiled) = tiler.ingest_image_tiled(bytes, self.ocr_tiling, 0.15).await {
+                    let extra = self.tier_a.analyze(&tiled, entities, score_threshold);
+                    merge_by_box(&mut found, extra);
+                }
+            }
+        }
+        let entities = found;
 
         if format == OutputFormat::Markdown {
             return Ok(redact::redact_text(&doc, &entities, format));
@@ -146,7 +208,7 @@ impl Engine {
             }
             Input::Image(bytes) => {
                 let redacted_bytes =
-                    redact::redact_image_bytes(&bytes, &entities, self.liteparse_config.dpi)?;
+                    redact::redact_image_bytes(&bytes, &entities, crate::ingest::IMAGE_OCR_DPI)?;
                 Ok(RedactionResult {
                     format,
                     bytes: Some(redacted_bytes),
@@ -190,6 +252,60 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{BoundingBox, DetectionSource, Span};
+
+    fn boxed(entity_type: &str, x: f32, y: f32) -> Entity {
+        Entity {
+            entity_type: entity_type.into(),
+            span: Span { start: 0, end: 4 },
+            score: 1.0,
+            bbox: Some(BoundingBox {
+                page: 1,
+                x,
+                y,
+                width: 20.0,
+                height: 10.0,
+            }),
+            source: DetectionSource::TierA,
+        }
+    }
+
+    #[test]
+    fn merge_keeps_a_genuinely_separate_second_occurrence() {
+        // The case this whole tiled pass exists for: the same NIR printed
+        // twice on one page, far apart. Both must survive the merge.
+        let mut found = vec![boxed("FR_NIR", 100.0, 100.0)];
+        merge_by_box(&mut found, vec![boxed("FR_NIR", 100.0, 4000.0)]);
+        assert_eq!(found.len(), 2, "a second, distant occurrence must be kept");
+    }
+
+    #[test]
+    fn merge_drops_the_same_box_seen_twice_across_overlapping_tiles() {
+        // Tiles overlap on purpose, so the same identifier legitimately
+        // arrives twice with near-identical boxes. Reporting it twice would
+        // overstate what was found.
+        let mut found = vec![boxed("FR_NIR", 100.0, 100.0)];
+        merge_by_box(&mut found, vec![boxed("FR_NIR", 101.0, 101.0)]);
+        assert_eq!(found.len(), 1, "an overlapping duplicate must be dropped");
+    }
+
+    #[test]
+    fn merge_keeps_a_different_entity_type_at_the_same_spot() {
+        let mut found = vec![boxed("FR_NIR", 100.0, 100.0)];
+        merge_by_box(&mut found, vec![boxed("IBAN_CODE", 100.0, 100.0)]);
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn merge_ignores_boxless_entities() {
+        // Tier B has no coordinates; it must not silently contribute an
+        // undrawable entity to a pixel-redaction result.
+        let mut found = vec![boxed("FR_NIR", 100.0, 100.0)];
+        let mut boxless = boxed("PERSON", 0.0, 0.0);
+        boxless.bbox = None;
+        merge_by_box(&mut found, vec![boxless]);
+        assert_eq!(found.len(), 1);
+    }
 
     #[tokio::test]
     async fn redacts_fr_nir_in_plain_text() {
