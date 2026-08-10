@@ -11,6 +11,39 @@ use crate::types::{BoundingBox, DocumentFormat, ExtractedDocument, Input, Span, 
 /// rasterization, so keying off it would misplace boxes on images the
 /// moment anyone changed it.
 pub(crate) const IMAGE_OCR_DPI: f32 = 150.0;
+
+/// Apply a JPEG/WebP/TIFF's EXIF orientation tag to the pixels, returning
+/// re-encoded PNG bytes when a rotation was actually needed.
+///
+/// Phones store pixels in the sensor's native orientation plus a tag saying
+/// how to turn them for display. Every viewer honours that tag, so the photo
+/// looks upright to whoever uploaded it -- but `image`'s `decode()` does not
+/// apply it, so OCR was being handed sideways text and matched nothing at
+/// all. Proven with a pair of otherwise identical files: upright pixels gave
+/// 3 detections, the same content stored sideways with Orientation=8 gave 0.
+///
+/// Returns None when there's nothing to do (no tag, already upright, or the
+/// format carries no orientation), so the caller keeps the original bytes.
+pub(crate) fn normalize_orientation(bytes: &[u8]) -> Option<Vec<u8>> {
+    use image::ImageDecoder;
+    use std::io::Cursor;
+
+    let mut decoder = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .into_decoder()
+        .ok()?;
+    let orientation = decoder.orientation().ok()?;
+    if orientation == image::metadata::Orientation::NoTransforms {
+        return None;
+    }
+    let mut img = image::DynamicImage::from_decoder(decoder).ok()?;
+    img.apply_orientation(orientation);
+
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
+}
 const UNITS_PER_PIXEL: f32 = 72.0 / IMAGE_OCR_DPI;
 
 impl From<DocumentFormat> for anydoc::Format {
@@ -386,6 +419,29 @@ impl Ingestor for LiteparseIngestor {
                     .into(),
             )),
         }
+    }
+}
+
+#[cfg(test)]
+mod orientation_tests {
+    use super::*;
+
+    #[test]
+    fn a_plain_image_with_no_exif_is_left_alone() {
+        // PNG carries no orientation tag, so this must be a no-op and the
+        // caller must keep the original bytes rather than paying a needless
+        // decode/re-encode on every upload.
+        let img = image::DynamicImage::ImageRgb8(image::RgbImage::new(8, 8));
+        let mut buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+        assert!(normalize_orientation(&buf.into_inner()).is_none());
+    }
+
+    #[test]
+    fn garbage_bytes_are_left_alone_rather_than_erroring() {
+        // Orientation handling must never be the thing that fails an upload;
+        // a real decode error surfaces later with a proper message.
+        assert!(normalize_orientation(b"not an image at all").is_none());
     }
 }
 

@@ -171,6 +171,18 @@ impl Engine {
         // boxes instead of silently requesting them.
         let needs_boxes =
             format == OutputFormat::Native && matches!(input, Input::Pdf(_) | Input::Image(_));
+        // Correct EXIF orientation ONCE, up front, so OCR and the pixels we
+        // draw boxes on are the same image. Doing it here rather than inside
+        // redact_image_bytes matters: if only the redaction step rotated,
+        // the boxes would be placed using coordinates from a differently
+        // oriented OCR pass and land in the wrong place.
+        let input = match input {
+            Input::Image(bytes) => {
+                Input::Image(ingest::normalize_orientation(&bytes).unwrap_or(bytes))
+            }
+            other => other,
+        };
+
         let doc = self.ingestor.ingest(&input, needs_boxes).await?;
         let mut found = self.tier_a.analyze(&doc, entities, score_threshold);
 
