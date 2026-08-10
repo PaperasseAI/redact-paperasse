@@ -211,6 +211,16 @@ jobs:
     # what keeps this safe: a missing platform is skipped, not published
     # broken.
     if: ${{ !cancelled() }}
+    # `npm publish --provenance` signs the package against this workflow run
+    # via OIDC, which needs id-token: write. The repo-wide default is
+    # contents: read, so without this the platform subpackages publish fine
+    # (they don't use --provenance) and then the ROOT package fails with
+    # "Provenance generation in GitHub Actions requires write access to the
+    # id-token permission" -- exactly what happened on the first run that got
+    # this far, leaving 3 subpackages on npm and no root package.
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
