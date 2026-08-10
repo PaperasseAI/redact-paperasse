@@ -155,12 +155,22 @@ async fn main() -> anyhow::Result<()> {
         eprintln!("{}", serde_json::to_string_pretty(&result.entities)?);
     }
 
-    match (&result.text, &result.markdown, &result.bytes) {
-        (Some(text), _, None) => match cli.output {
+    // Prefer the field matching what was actually requested (`--format`).
+    // Both hold identical content today (`redact_text` sets `text` from the
+    // same string as `markdown` on every ingest path), so this ordering is
+    // a no-op in practice right now, but it's the correct selection if that
+    // ever stops being true.
+    let text_output = if format == OutputFormat::Markdown {
+        result.markdown.as_ref().or(result.text.as_ref())
+    } else {
+        result.text.as_ref().or(result.markdown.as_ref())
+    };
+    match (text_output, &result.bytes) {
+        (Some(text), None) => match cli.output {
             Some(path) => std::fs::write(path, text)?,
             None => println!("{text}"),
         },
-        (_, _, Some(bytes)) => {
+        (_, Some(bytes)) => {
             let path = cli
                 .output
                 .or_else(|| cli.file.as_ref().map(|f| f.with_extension("redacted.out")))

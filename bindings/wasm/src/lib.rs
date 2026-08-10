@@ -14,8 +14,10 @@ use wasm_bindgen::prelude::*;
 
 /// Redact PII from plain text (Tier A: in-process regex+checksum
 /// recognizers — the whole point of a WASM build, since it runs entirely
-/// client-side with no server round trip). Pass `markdown: true` to force
-/// markdown output. Pass `entities: ["FR_NIR"]` to redact only that entity
+/// client-side with no server round trip). Markdown is the default output
+/// (this is a tool for agents, and markdown is what they parse best) —
+/// pass `markdown: false` to get back plain text in the input's own shape
+/// instead. Pass `entities: ["FR_NIR"]` to redact only that entity
 /// type — matches Presidio's `analyzer_entities` filter; omit/`undefined`
 /// to redact every entity type Tier A's recognizers cover. Pass
 /// `score_threshold: 0.95` to drop matches scoring below it — matches
@@ -31,7 +33,7 @@ pub async fn redact_text(
     console_error_panic_hook::set_once();
 
     let engine = Engine::default();
-    let format = if markdown.unwrap_or(false) {
+    let format = if markdown.unwrap_or(true) {
         OutputFormat::Markdown
     } else {
         OutputFormat::Native
@@ -45,7 +47,17 @@ pub async fn redact_text(
         )
         .await
         .map_err(|e| JsError::new(&e.to_string()))?;
-    Ok(result.text.or(result.markdown).unwrap_or_default())
+    // Prefer the field matching what was actually requested. Both fields
+    // hold identical content today (`redact_text` sets `text` from the same
+    // string as `markdown` on every ingest path), so this is a no-op in
+    // practice right now, but it's the correct selection if that ever stops
+    // being true.
+    let output = if format == OutputFormat::Markdown {
+        result.markdown.or(result.text)
+    } else {
+        result.text.or(result.markdown)
+    };
+    Ok(output.unwrap_or_default())
 }
 
 /// Redact PII from a plain image (jpg/png/…): OCR it, find PII via Tier A,

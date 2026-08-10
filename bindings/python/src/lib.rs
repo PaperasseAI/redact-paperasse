@@ -2,14 +2,16 @@ use paperasse_privacy_core::{Engine, Input, OutputFormat};
 use pyo3::prelude::*;
 
 /// Redact PII from plain text (Tier A: in-process regex+checksum
-/// recognizers, no network call). Pass `markdown=True` to force markdown
-/// output. Pass `entities=["FR_NIR"]` to redact only that entity type —
+/// recognizers, no network call). Markdown is the default output (this is
+/// a tool for agents, and markdown is what they parse best) — pass
+/// `markdown=False` to get back plain text in the input's own shape
+/// instead. Pass `entities=["FR_NIR"]` to redact only that entity type —
 /// matches Presidio's `analyzer_entities` filter; omit/`None` to redact
 /// every entity type Tier A's recognizers cover. Pass
 /// `score_threshold=0.95` to drop matches scoring below it — matches
 /// Presidio's own `score_threshold`.
 #[pyfunction]
-#[pyo3(signature = (text, markdown=false, entities=None, score_threshold=None))]
+#[pyo3(signature = (text, markdown=true, entities=None, score_threshold=None))]
 fn redact_text(
     py: Python<'_>,
     text: String,
@@ -33,7 +35,17 @@ fn redact_text(
             )
             .await
             .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
-        Ok(result.text.or(result.markdown).unwrap_or_default())
+        // Prefer the field matching what was actually requested. Both
+        // fields hold identical content today (`redact_text` sets `text`
+        // from the same string as `markdown` on every ingest path), so this
+        // is a no-op in practice right now, but it's the correct selection
+        // if that ever stops being true.
+        let output = if format == OutputFormat::Markdown {
+            result.markdown.or(result.text)
+        } else {
+            result.text.or(result.markdown)
+        };
+        Ok(output.unwrap_or_default())
     })
 }
 

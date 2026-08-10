@@ -7,7 +7,9 @@ use paperasse_privacy_core::{Engine, Input, OutputFormat};
 /// Options for `redactText`. All fields optional.
 #[napi(object)]
 pub struct RedactTextOptions {
-    /// Force structured markdown output instead of plain text. Default false.
+    /// Structured markdown output is the default (this is a tool for
+    /// agents, and markdown is what they parse best) — pass `false` to get
+    /// back plain text in the input's own shape instead.
     pub markdown: Option<bool>,
     /// Only redact these entity types (e.g. `["FR_NIR"]`) — matches
     /// Presidio's `analyzer_entities` filter. Omit/undefined to redact
@@ -43,7 +45,7 @@ pub async fn redact_text(text: String, options: Option<RedactTextOptions>) -> na
         score_threshold: None,
     });
     let engine = Engine::default();
-    let format = if options.markdown.unwrap_or(false) {
+    let format = if options.markdown.unwrap_or(true) {
         OutputFormat::Markdown
     } else {
         OutputFormat::Native
@@ -57,7 +59,17 @@ pub async fn redact_text(text: String, options: Option<RedactTextOptions>) -> na
         )
         .await
         .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-    Ok(result.text.or(result.markdown).unwrap_or_default())
+    // Prefer the field matching what was actually requested. Both fields
+    // hold identical content today (`redact_text` sets `text` from the same
+    // string as `markdown` on every ingest path), so this is a no-op in
+    // practice right now, but it's the correct selection if that ever stops
+    // being true.
+    let output = if format == OutputFormat::Markdown {
+        result.markdown.or(result.text)
+    } else {
+        result.text.or(result.markdown)
+    };
+    Ok(output.unwrap_or_default())
 }
 
 /// Redact PII from a plain image (jpg/png/…): OCR it (liteparse, bundled

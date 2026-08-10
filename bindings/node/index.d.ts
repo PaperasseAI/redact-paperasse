@@ -5,7 +5,11 @@
 
 /** Options for `redactText`. All fields optional. */
 export interface RedactTextOptions {
-  /** Force structured markdown output instead of plain text. Default false. */
+  /**
+   * Structured markdown output is the default (this is a tool for
+   * agents, and markdown is what they parse best) — pass `false` to get
+   * back plain text in the input's own shape instead.
+   */
   markdown?: boolean
   /**
    * Only redact these entity types (e.g. `["FR_NIR"]`) — matches

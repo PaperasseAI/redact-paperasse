@@ -13,13 +13,16 @@ const text =
 console.log('--- input ---');
 console.log(text);
 
-const redacted = await redactText(text);
-console.log('\n--- redacted (Native) ---');
-console.log(redacted);
-
-const redactedMarkdown = await redactText(text, { markdown: true });
-console.log('\n--- redacted (Markdown) ---');
+// Markdown is the default output — this is a tool for agents, and markdown
+// is what they parse best.
+const redactedMarkdown = await redactText(text);
+console.log('\n--- redacted (Markdown, the default) ---');
 console.log(redactedMarkdown);
+
+// { markdown: false } opts back into plain text, in the input's own shape.
+const redacted = await redactText(text, { markdown: false });
+console.log('\n--- redacted (Native / plain text) ---');
+console.log(redacted);
 
 // entities filter — matches Presidio's analyzer_entities: redact ONLY the
 // NIR, leave the email (and the name — Tier A has no NER) untouched.
