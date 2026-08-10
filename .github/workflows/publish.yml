@@ -207,6 +207,21 @@ jobs:
               path=$(find "$search_home" -maxdepth 8 -name "$name" 2>/dev/null | head -1)
             fi
           fi
+          # Every guess so far has failed on real CI runs (see this
+          # workflow's header comment for the history) -- rather than
+          # guess a fourth time, dump real ground truth on failure so the
+          # next fix is based on data, not another guess.
+          if [ -z "$path" ]; then
+            echo "::group::pdfium locate diagnostics"
+            echo "--- HOME=$HOME  XDG_CACHE_HOME=${XDG_CACHE_HOME:-<unset>}  LOCALAPPDATA=${LOCALAPPDATA:-<unset>} ---"
+            echo "--- every *pdfium* file under target/ ---"
+            find target -iname "*pdfium*" 2>/dev/null
+            echo "--- every *pdfium* file under \$HOME (maxdepth 10) ---"
+            find "${HOME:-/nonexistent}" -maxdepth 10 -iname "*pdfium*" 2>/dev/null
+            echo "--- every *pdfium* file anywhere under / (maxdepth 6, best effort) ---"
+            find / -maxdepth 6 -iname "*pdfium*" 2>/dev/null
+            echo "::endgroup::"
+          fi
           if [ -z "$path" ]; then
             echo "::error::could not find $name under target/**/release/deps/, the pdfium-rs download cache, or a bounded search under \$HOME"
             exit 1
