@@ -1,6 +1,6 @@
 {
   "name": "redact-paperasse-win32-x64-msvc",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "os": [
     "win32"
   ],
@@ -12,7 +12,7 @@
     "index.win32-x64-msvc.node",
     "pdfium.dll"
   ],
-  "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
+  "description": "Fast PII redaction for agents \u2014 image/PDF/text in, redacted image/PDF/text/markdown out",
   "license": "MIT",
   "repository": "https://github.com/PaperasseAI/redact-paperasse"
 }

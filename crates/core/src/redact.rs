@@ -1,8 +1,7 @@
 use std::io::Cursor;
 
-#[cfg(not(target_arch = "wasm32"))]
 use image::ImageFormat;
-use image::{ImageReader, Rgba, RgbaImage};
+use image::{DynamicImage, ImageReader, Rgba, RgbaImage};
 #[cfg(not(target_arch = "wasm32"))]
 use liteparse::types::PdfInput;
 #[cfg(not(target_arch = "wasm32"))]
@@ -151,9 +150,41 @@ pub fn redact_image_bytes(bytes: &[u8], entities: &[Entity]) -> Result<Vec<u8>, 
     let assumed_dpi = 150.0_f32; // TODO(build-validation): confirm against real ingest DPI.
     draw_redaction_boxes(&mut rgba, entities, None, assumed_dpi / 72.0);
 
+    // Boxes are drawn on an RGBA buffer, but not every format can encode an
+    // alpha channel — JPEG has none at all, and `image`'s encoder rejects
+    // Rgba8 outright ("The encoder or decoder for Jpeg does not support the
+    // color type `Rgba8`"). Found by a real upload of a photographed
+    // document to the live demo: every JPEG failed, while the PNG fixtures
+    // this was tested against all passed. Photos of paperwork are
+    // overwhelmingly JPEG, so this was the main path being broken.
+    //
+    // Dropping alpha is lossless for our purposes: we decode an existing
+    // image and draw fully opaque boxes, so nothing is ever transparent.
+    // JPEG is handled up front as the known case; any other alpha-less
+    // format (pnm, hdr, …) is caught by the retry rather than by trying to
+    // enumerate the full list correctly.
     let mut out = Cursor::new(Vec::new());
-    rgba.write_to(&mut out, format)
-        .map_err(|e| EngineError::Redact(format!("failed to re-encode image: {e}")))?;
+    let write_result = if format == ImageFormat::Jpeg {
+        DynamicImage::ImageRgba8(rgba.clone())
+            .to_rgb8()
+            .write_to(&mut out, format)
+    } else {
+        rgba.write_to(&mut out, format)
+    };
+
+    if let Err(err) = write_result {
+        out = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(rgba)
+            .to_rgb8()
+            .write_to(&mut out, format)
+            .map_err(|_| {
+                // Report the original RGBA error: the RGB retry failing too
+                // means the format is unsupported for reasons that have
+                // nothing to do with the alpha channel.
+                EngineError::Redact(format!("failed to re-encode image: {err}"))
+            })?;
+    }
+
     Ok(out.into_inner())
 }
 
@@ -294,5 +325,69 @@ mod tests {
     fn leaves_untouched_text_around_the_span() {
         let redacted = mask_text("prefix SECRET suffix", &[entity(7, 13)]);
         assert_eq!(redacted, "prefix ██████ suffix");
+    }
+
+    /// Encode a small solid-white image in `format`, entirely in memory —
+    /// no fixture files, so this stays a real unit test.
+    fn encode_blank(format: ImageFormat) -> Vec<u8> {
+        let img = DynamicImage::ImageRgb8(image::RgbImage::from_pixel(
+            64,
+            64,
+            image::Rgb([255, 255, 255]),
+        ));
+        let mut buf = Cursor::new(Vec::new());
+        img.write_to(&mut buf, format).expect("encode should work");
+        buf.into_inner()
+    }
+
+    fn entity_with_box() -> Entity {
+        Entity {
+            entity_type: "TEST".into(),
+            span: Span { start: 0, end: 4 },
+            score: 1.0,
+            bbox: Some(crate::types::BoundingBox {
+                page: 1,
+                x: 4.0,
+                y: 4.0,
+                width: 8.0,
+                height: 4.0,
+            }),
+            source: DetectionSource::TierA,
+        }
+    }
+
+    #[test]
+    fn redacts_a_jpeg_without_failing_on_the_alpha_channel() {
+        // Regression test for a real bug found by a real upload to the live
+        // demo, not by any fixture here: redaction draws boxes on an RGBA
+        // buffer, but JPEG has no alpha channel and `image`'s encoder
+        // rejects Rgba8 outright. Every JPEG upload failed while every PNG
+        // passed — and photographed paperwork, the whole point of this
+        // tool, is overwhelmingly JPEG.
+        let jpeg = encode_blank(ImageFormat::Jpeg);
+        let out = redact_image_bytes(&jpeg, &[entity_with_box()])
+            .expect("redacting a JPEG must not fail on the alpha channel");
+
+        assert_eq!(
+            image::guess_format(&out).expect("output should be a real image"),
+            ImageFormat::Jpeg,
+            "a JPEG in should stay a JPEG out",
+        );
+        // And it must still decode — an encoder that "succeeded" into
+        // garbage bytes would be worse than the original error.
+        image::load_from_memory(&out).expect("redacted JPEG should decode");
+    }
+
+    #[test]
+    fn redacts_a_png_preserving_its_format() {
+        // The case that always worked — kept so a future fix for one format
+        // can't silently break the other.
+        let png = encode_blank(ImageFormat::Png);
+        let out = redact_image_bytes(&png, &[entity_with_box()]).expect("redacting a PNG works");
+        assert_eq!(
+            image::guess_format(&out).expect("output should be a real image"),
+            ImageFormat::Png,
+        );
+        image::load_from_memory(&out).expect("redacted PNG should decode");
     }
 }

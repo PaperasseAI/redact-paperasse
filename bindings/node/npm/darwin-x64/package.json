@@ -1,6 +1,6 @@
 {
   "name": "redact-paperasse-darwin-x64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "os": [
     "darwin"
   ],
@@ -12,7 +12,7 @@
     "index.darwin-x64.node",
     "libpdfium.dylib"
   ],
-  "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
+  "description": "Fast PII redaction for agents \u2014 image/PDF/text in, redacted image/PDF/text/markdown out",
   "license": "MIT",
   "repository": "https://github.com/PaperasseAI/redact-paperasse"
 }
