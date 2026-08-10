@@ -7,12 +7,12 @@ use crate::types::{BoundingBox, DetectionSource, Entity, ExtractedDocument, Span
 /// contained in.
 ///
 /// A real bug found while testing this crate's Node binding against a
-/// synthetic fixture: a spaced NIR ("2 91 05 99 338 076 92") OCRs as seven
+/// synthetic fixture: a spaced NIR ("1 85 01 75 123 456 09") OCRs as seven
 /// separate word tokens, so the regex match spans all seven — but the
 /// original lookup (`find` on a single `word_box` fully containing the
 /// match) never matches a multi-token span, silently returning `bbox:
 /// None` and skipping the redaction box entirely. A real photographed
-/// document's *compact* NIR ("291059933807692", no spaces) OCRs as one
+/// document's *compact* NIR ("185017512345609", no spaces) OCRs as one
 /// token, which is why that case worked and this one didn't — the bug was
 /// there the whole time, just not exercised by the one format tested.
 ///
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn multi_token_match_unions_every_overlapping_box() {
-        // The bug: "2 91 05 99 338 076 92" OCRs as 7 tokens, the regex
+        // The bug: "1 85 01 75 123 456 09" OCRs as 7 tokens, the regex
         // match spans all of them. Simulate 3 adjacent word_boxes and a
         // match spanning all three — the result must cover all three, not
         // come back None.

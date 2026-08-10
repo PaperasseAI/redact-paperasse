@@ -8,7 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const text =
   "Bonjour, je m'appelle Jean Dupont. Mon email est jean.dupont@example.com " +
-  'et mon numéro de sécurité sociale est 2 91 05 99 338 076 92. Merci de traiter ma demande.';
+  'et mon numéro de sécurité sociale est 1 85 01 75 123 456 09. Merci de traiter ma demande.';
 
 console.log('--- input ---');
 console.log(text);

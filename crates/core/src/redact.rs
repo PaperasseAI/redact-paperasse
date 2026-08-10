@@ -307,8 +307,8 @@ mod tests {
         // caught: byte offsets from `regex`, char-indexed masking — wrong
         // whenever non-ASCII content (accented French, here) precedes the
         // match.
-        let text = "mon numéro de sécurité sociale est 2 91 05 99 338 076 92";
-        let matched = "2 91 05 99 338 076 92";
+        let text = "mon numéro de sécurité sociale est 1 85 01 75 123 456 09";
+        let matched = "1 85 01 75 123 456 09";
         let start = text.find(matched).expect("fixture contains the match");
         let redacted = mask_text(text, &[entity(start, start + matched.len())]);
 

@@ -10,8 +10,8 @@ use crate::{Match, Recognizer};
 /// format reference and the OCR'd real-document test that motivated it).
 ///
 /// Format: S YY MM DD CCC OOO KK — 13 significant digits followed by a 2-digit
-/// checksum, written with or without spaces/dots (e.g. "2 91 05 99 338 076 92"
-/// or "291059933807692"). Reference: <https://www.insee.fr/fr/metadonnees/definition/c1409>
+/// checksum, written with or without spaces/dots (e.g. "1 85 01 75 123 456 09"
+/// or "185017512345609"). Reference: <https://www.insee.fr/fr/metadonnees/definition/c1409>
 pub struct FrNir;
 
 static NIR_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn compact_valid() {
-        assert_eq!(spans("291059933807692"), vec![(0, 15)]);
+        assert_eq!(spans("185017512345609"), vec![(0, 15)]);
     }
 
     #[test]
@@ -115,7 +115,7 @@ mod tests {
     #[test]
     fn wrong_length_rejected() {
         assert!(spans("29105993380769").is_empty());
-        assert!(spans("2910599338076920").is_empty());
+        assert!(spans("1850175123456090").is_empty());
     }
 
     #[test]
@@ -131,14 +131,14 @@ mod tests {
         // same distinction that motivated fixing `redact::mask_text` to
         // work on byte spans directly instead of a `Vec<char>`.
         assert_eq!(
-            spans("mon numéro de sécurité sociale est 2 91 05 99 338 076 92"),
+            spans("mon numéro de sécurité sociale est 1 85 01 75 123 456 09"),
             vec![(38, 59)]
         );
     }
 
     #[test]
     fn score_is_one_when_valid() {
-        let m = &FrNir.analyze("291059933807692")[0];
+        let m = &FrNir.analyze("185017512345609")[0];
         assert_eq!(m.score, 1.0);
     }
 }

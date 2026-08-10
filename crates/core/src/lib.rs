@@ -312,7 +312,7 @@ mod tests {
         let engine = Engine::default();
         let result = engine
             .process(
-                Input::Text("mon NIR est 291059933807692, merci.".to_string()),
+                Input::Text("mon NIR est 185017512345609, merci.".to_string()),
                 OutputFormat::Native,
                 None,
                 None,
@@ -322,13 +322,13 @@ mod tests {
 
         assert_eq!(result.entities.len(), 1);
         assert_eq!(result.entities[0].entity_type, "FR_NIR");
-        assert!(!result.text.unwrap().contains("291059933807692"));
+        assert!(!result.text.unwrap().contains("185017512345609"));
     }
 
     #[tokio::test]
     async fn entities_filter_redacts_only_the_requested_type() {
         let engine = Engine::default();
-        let text = "email: john@example.com, nir: 291059933807692".to_string();
+        let text = "email: john@example.com, nir: 185017512345609".to_string();
 
         let filtered = engine
             .process(
@@ -343,7 +343,7 @@ mod tests {
         assert_eq!(filtered.entities[0].entity_type, "FR_NIR");
         let redacted = filtered.text.unwrap();
         assert!(redacted.contains("john@example.com")); // untouched — not in the filter
-        assert!(!redacted.contains("291059933807692"));
+        assert!(!redacted.contains("185017512345609"));
 
         let unfiltered = engine
             .process(Input::Text(text), OutputFormat::Native, None, None)
@@ -357,7 +357,7 @@ mod tests {
         let engine = Engine::default();
         // Email always scores 0.9, FR_NIR always scores 1.0 (see TierA::analyze's
         // doc comment) — a 0.95 threshold should keep the NIR and drop the email.
-        let text = "email: john@example.com, nir: 291059933807692".to_string();
+        let text = "email: john@example.com, nir: 185017512345609".to_string();
 
         let result = engine
             .process(Input::Text(text), OutputFormat::Native, None, Some(0.95))
