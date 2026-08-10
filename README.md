@@ -2,6 +2,8 @@
 
 A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, or text out. For the text path, markdown is the default output shape (agents parse it best) — pass `markdown: false` to get plain text back instead. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
+**Try it: [redact.paperasse.ai](https://redact.paperasse.ai)** — upload text, an image, or a PDF, pick which kinds of PII to redact, and get the redacted file back. Nothing is stored: the upload is redacted in memory and streamed back in the same request. Source for the demo is at [PaperasseAI/redact-paperasse-demo](https://github.com/PaperasseAI/redact-paperasse-demo).
+
 ![redact-paperasse: image, PDF, and text/markdown in, redacted out](assets/demo.gif)
 
 *Every frame above is real tool output — the same fixtures and CLI runs used throughout this README, not a mockup.*
