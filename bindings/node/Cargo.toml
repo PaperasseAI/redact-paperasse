@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 version.workspace = true
+# Consumed via napi's own npm packaging (see bindings/node/package.json),
+# not crates.io — this crate-type is cdylib-only and meaningless as a Rust
+# library dependency.
+publish = false
 
 [lib]
 crate-type = ["cdylib"]

@@ -6,11 +6,19 @@
 //! context-dependent rather than a fixed identifier format), see Tier B in
 //! `paperasse-privacy-core::detect::tier_b`, which calls out to Presidio.
 
+mod credit_card;
 mod email;
 mod fr_nir;
+mod iban;
+mod phone_number;
+mod us_ssn;
 
+pub use credit_card::CreditCard;
 pub use email::Email;
 pub use fr_nir::FrNir;
+pub use iban::Iban;
+pub use phone_number::PhoneNumber;
+pub use us_ssn::UsSsn;
 
 /// A single detected span, in byte offsets into the analyzed text.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,5 +47,12 @@ pub trait Recognizer: Send + Sync {
 /// each one is a self-contained module with its own tests (see `fr_nir.rs`
 /// for the pattern: regex + `validate()` + a `#[cfg(test)]` module).
 pub fn default_registry() -> Vec<Box<dyn Recognizer>> {
-    vec![Box::new(FrNir), Box::new(Email)]
+    vec![
+        Box::new(FrNir),
+        Box::new(Email),
+        Box::new(UsSsn),
+        Box::new(Iban),
+        Box::new(CreditCard),
+        Box::new(PhoneNumber),
+    ]
 }

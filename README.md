@@ -2,7 +2,7 @@
 
 A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, text, or (optionally) markdown out. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
-> **Status: early, but working.** `cargo test --workspace` passes (25 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
+> **Status: early, but working.** `cargo test --workspace` passes (56 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
 
@@ -51,7 +51,8 @@ Tier B is fail-closed by design, not fail-open: if the Presidio deployment is un
 ```
 crates/
   core/         paperasse-privacy-core — the pipeline (ingest/detect/redact)
-  recognizers/  paperasse-privacy-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS, ...
+  recognizers/  paperasse-privacy-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS,
+                US_SSN, IBAN_CODE, CREDIT_CARD, PHONE_NUMBER
   cli/          `ppr` binary (--features tier-b for the Presidio flag)
 bindings/
   node/         napi-rs (@paperasse/privacy on npm) — see example.mjs
@@ -62,13 +63,20 @@ bindings/
 
 ## Adding a Tier A recognizer
 
-Each recognizer is a self-contained module in `crates/recognizers/src/` implementing the `Recognizer` trait (`entity_type()` + `analyze(text) -> Vec<Match>`) with its own `#[cfg(test)]` block. `fr_nir.rs` is the reference example: regex + a real checksum in `validate()`, tests ported directly from the Python recognizer's test suite. Register new recognizers in `default_registry()` in `lib.rs`.
+Each recognizer is a self-contained module in `crates/recognizers/src/` implementing the `Recognizer` trait (`entity_type()` + `analyze(text) -> Vec<Match>`) with its own `#[cfg(test)]` block. Register new recognizers in `default_registry()` in `lib.rs`.
+
+Six are registered today, each honest about how strong its own validation actually is:
+
+- **`fr_nir.rs`** / **`iban.rs`** / **`credit_card.rs`** — a real checksum (`FR_NIR`: INSEE mod-97, `IBAN_CODE`: ISO 7064 mod-97, `CREDIT_CARD`: Luhn). A match that fails the checksum is rejected outright rather than reported at low confidence, so anything returned scores `1.0`.
+- **`us_ssn.rs`** — no checksum exists for SSNs; `validate()` instead encodes the same area/group/serial exclusion rules (000/666/900-999, 00, 0000) Presidio's own `UsSsnRecognizer` uses. Scores `0.85`, not `1.0`, to reflect that this is structural plausibility, not a real checksum.
+- **`phone_number.rs`** — regex shape + digit-count sanity check only, deliberately narrower than Presidio's `phonenumbers`-backed recognizer (no region-aware validation). Scores `0.75`.
+- **`email.rs`** — regex only, no validation beyond the pattern itself. Scores `0.9`.
 
 ## Build status
 
 Clean, zero warnings, on everything CI checks (`.github/workflows/ci.yml`):
 
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **25/25 tests pass.**
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **56/56 tests pass.**
 - `cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
 - `cargo check -p paperasse-privacy-cli --features tier-b` — the Presidio-calling code path, which is off by default.
 - The Node binding is built for real (`napi build --platform`) and exercised with `example.mjs` against the actual compiled addon, not just type-checked.
@@ -100,6 +108,10 @@ Along the way this also surfaced a real bug in a dependency, not in this code: `
 
 All three bindings now expose pixel redaction directly, not just `redactText`: Node's `redactImage`/`redactPdf`, Python's `redact_image`/`redact_pdf`, and WASM's `redactImage` (no `redactPdf` there — same wasm32 constraint as the core crate). `bindings/node/fixtures/` holds small synthetic test images (`sample.png`, generated with a real TrueType font at a readable size — a first attempt with PIL's tiny default bitmap font produced OCR garbage, the same class of lesson as the DPI notes above) containing fake PII, checked into the repo (unlike the real photographed document above, which stays local/gitignored). `example.mjs` redacts both and is run in CI, so the pixel-redaction path — not just the text path — is exercised on every push, not only manually. This fixture is exactly what caught bug #8 above.
 
+## Publishing
+
+`.github/workflows/publish.yml` builds and publishes to crates.io, npm, and PyPI on a `vX.Y.Z` tag push — see that file's header comment for the required repo secrets and, importantly, which parts of it (the multi-platform matrix builds) haven't actually been exercised by a real release yet, as distinct from `ci.yml`'s checks, which run and are verified on every push.
+
 ## License
 
-MIT
+MIT — see `NOTICE.md` for a full audit of the dependency tree's own licenses (all permissive; no GPL/AGPL/SSPL anywhere in it, checked by CI's `license-check` job on every push).

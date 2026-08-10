@@ -1,0 +1,169 @@
+name: Publish
+
+# Triggered by pushing a `vX.Y.Z` tag, or manually via workflow_dispatch for
+# a dry run of the build matrix (publish steps still require the tag push —
+# `npm publish`/`maturin upload`/`cargo publish` all read the version out of
+# the already-committed Cargo.toml/package.json/pyproject.toml, this
+# workflow doesn't bump versions itself).
+#
+# Requires three repo secrets, none of which are configured yet:
+#   CARGO_REGISTRY_TOKEN — crates.io API token
+#   NPM_TOKEN             — npm automation token for the @paperasse org
+#   PYPI_API_TOKEN         — PyPI API token (or switch to trusted publishing)
+#
+# Unlike ci.yml, this pipeline hasn't been exercised end to end (no tag has
+# been pushed) — it's built from napi-rs's and maturin's own documented CI
+# patterns, but the multi-platform matrix builds (especially the Linux PyPI
+# wheel, built inside a manylinux container where liteparse's cmake/tesseract
+# build dependency needs a separate install hook) should be treated as
+# unverified until a real release actually runs this.
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  crates-io:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install native build dependencies (Tesseract/Leptonica via CMake)
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+      # Published in dependency order (recognizers has no internal deps,
+      # core depends on it, cli depends on core). A short sleep after each
+      # publish gives crates.io's index time to catch up before the next
+      # crate's `cargo publish` tries to resolve it as a registry dep
+      # rather than a path dep.
+      - run: cargo publish -p paperasse-privacy-recognizers --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - run: sleep 30
+      - run: cargo publish -p paperasse-privacy-core --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - run: sleep 30
+      - run: cargo publish -p paperasse-privacy-cli --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  npm-build:
+    name: Build native addon (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-13
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install native build dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+      - name: Install native build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake pkg-config
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install
+        working-directory: bindings/node
+      - run: npx napi build --platform --release --target ${{ matrix.target }}
+        working-directory: bindings/node
+      - uses: actions/upload-artifact@v4
+        with:
+          name: napi-${{ matrix.target }}
+          path: bindings/node/*.node
+
+  npm-publish:
+    name: Publish npm package
+    needs: npm-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v4
+        with:
+          path: bindings/node/artifacts
+      - name: Move every platform's .node file next to package.json
+        run: find bindings/node/artifacts -name "*.node" -exec mv {} bindings/node/ \;
+      - run: npm install
+        working-directory: bindings/node
+      - run: npx napi artifacts
+        working-directory: bindings/node
+      - run: npm publish --provenance --access public
+        working-directory: bindings/node
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  pypi-build:
+    name: Build Python wheel (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native build dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: brew install cmake pkg-config
+      - uses: PyO3/maturin-action@v1
+        with:
+          working-directory: bindings/python
+          target: ${{ matrix.target }}
+          args: --release --out dist
+          # The Linux build runs inside a manylinux container, where the
+          # host's apt-get above doesn't apply — liteparse's `tesseract`
+          # feature needs cmake/pkg-config installed inside that container
+          # instead. Untested: this is the standard maturin-action hook for
+          # this situation, but no wheel has actually been built with it yet.
+          before-script-linux: |
+            if command -v yum &> /dev/null; then
+              yum install -y cmake pkgconfig
+            elif command -v apt-get &> /dev/null; then
+              apt-get update && apt-get install -y cmake pkg-config
+            fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: bindings/python/dist
+
+  pypi-publish:
+    name: Publish to PyPI
+    needs: pypi-build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - uses: PyO3/maturin-action@v1
+        with:
+          command: upload
+          args: --non-interactive --skip-existing dist/*
+        env:
+          MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}

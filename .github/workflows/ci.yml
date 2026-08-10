@@ -55,6 +55,30 @@ jobs:
       # only exposes Tier A text redaction.
       - run: cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -- -D warnings
 
+  license-check:
+    name: Dependency license audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-license
+      # See NOTICE.md for the full audit and rationale. This is a
+      # regression guard, not the audit itself: it fails if a future
+      # dependency bump ever pulls in a strong-copyleft-licensed crate,
+      # which would be incompatible with this project's MIT license.
+      # LGPL is deliberately NOT flagged: r-efi offers it only as one
+      # option in an Apache-2.0/LGPL-2.1/MIT choice, which Cargo resolves
+      # under Apache-2.0/MIT — see NOTICE.md.
+      - name: Fail if any dependency license contains GPL/AGPL/SSPL
+        run: |
+          cargo license --all-features > license-report.txt
+          cat license-report.txt
+          if grep -Ei '\b(A?GPL)-|\bSSPL-' license-report.txt; then
+            echo "::error::A dependency license looks copyleft-incompatible with MIT — see NOTICE.md and update it if this is a real, acceptable addition."
+            exit 1
+          fi
+
   node:
     name: Node binding (build + real example)
     runs-on: ubuntu-latest

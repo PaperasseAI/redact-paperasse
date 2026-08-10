@@ -5,6 +5,10 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 version.workspace = true
+# Consumed via wasm-pack/wasm-bindgen's own npm packaging, not crates.io —
+# this crate-type is cdylib-only and meaningless as a Rust library
+# dependency.
+publish = false
 
 [lib]
 crate-type = ["cdylib"]
