@@ -16,6 +16,14 @@ crate-type = ["cdylib"]
 
 [dependencies]
 redact-paperasse-core = { workspace = true }
-pyo3 = { version = "0.23", features = ["extension-module"] }
+# abi3-py39 targets Python's stable C API frozen at 3.9 (matches
+# pyproject.toml's requires-python) -- one wheel per platform instead of
+# one per Python version, and immune to "PyO3 doesn't know this Python
+# version yet" build failures on a CI runner with a newer default Python
+# than PyO3's release has explicitly added support for (hit this for real:
+# macOS's runner shipped Python 3.14, PyO3 0.23 caps its known-version list
+# at 3.13 -- abi3 sidesteps the whole class of problem since the stable ABI
+# doesn't change between CPython versions).
+pyo3 = { version = "0.23", features = ["extension-module", "abi3-py39"] }
 pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }
