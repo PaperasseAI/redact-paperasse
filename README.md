@@ -4,8 +4,9 @@ A privacy engine for agents: image, PDF, office document, or text in → redacte
 
 **Try it: [redact.paperasse.ai](https://redact.paperasse.ai)** — upload text, an image, or a PDF, pick which kinds of PII to redact, and get the redacted file back. Nothing is stored: the upload is redacted in memory and streamed back in the same request. Source for the demo is at [PaperasseAI/redact-paperasse-demo](https://github.com/PaperasseAI/redact-paperasse-demo).
 
-*(Demo animation temporarily removed: it had a real French social security number rendered into its frames. Being regenerated from synthetic data.)*
+![redact-paperasse: image, PDF, and text/markdown in, redacted out](assets/demo.gif)
 
+*Every frame is real tool output — the ID card's SSN and the PDF are redacted by the actual CLI, not mocked up. All identifiers shown are synthetic.*
 > **Status: early, but working.** `cargo test --workspace` passes (62 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
