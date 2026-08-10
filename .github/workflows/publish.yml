@@ -185,17 +185,33 @@ jobs:
           # populated deps/ with anything), so the copy silently never
           # happens. Fall back to the crate's own download cache, which
           # build.rs always populates first regardless of that race.
+          # First guess is build.rs's own cache-dir priority order (its
+          # dirs_cache(): $XDG_CACHE_HOME if set, else ~/Library/Caches on
+          # macOS, ~/.cache elsewhere, or %LOCALAPPDATA% on Windows) --
+          # tried this exact set on the first real release attempt and it
+          # still failed on Linux, meaning some assumption here (most
+          # likely XDG_CACHE_HOME being preset to something else on that
+          # runner) was wrong. Falls through to a bounded find under $HOME
+          # for the filename directly, which works regardless of exactly
+          # which of those paths build.rs actually used.
           if [ -z "$path" ]; then
-            for cache_root in "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
+            for cache_root in "${XDG_CACHE_HOME:-}/pdfium-rs" "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
               [ -d "$cache_root" ] || continue
               path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
               [ -n "$path" ] && break
             done
           fi
           if [ -z "$path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/ or the pdfium-rs download cache"
+            search_home="${HOME:-${USERPROFILE:-}}"
+            if [ -n "$search_home" ] && [ -d "$search_home" ]; then
+              path=$(find "$search_home" -maxdepth 8 -name "$name" 2>/dev/null | head -1)
+            fi
+          fi
+          if [ -z "$path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/, the pdfium-rs download cache, or a bounded search under \$HOME"
             exit 1
           fi
+          echo "found $name at $path"
           cp "$path" "bindings/node/$name"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       # `napi artifacts` (run in npm-publish) only picks up files named
@@ -385,16 +401,23 @@ jobs:
           # way; the macOS/Windows legs run natively so this fallback is
           # solid for those.
           if [ -z "$pdfium_path" ]; then
-            for cache_root in "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
+            for cache_root in "${XDG_CACHE_HOME:-}/pdfium-rs" "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
               [ -d "$cache_root" ] || continue
               pdfium_path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
               [ -n "$pdfium_path" ] && break
             done
           fi
           if [ -z "$pdfium_path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/ or the pdfium-rs download cache"
+            search_home="${HOME:-${USERPROFILE:-}}"
+            if [ -n "$search_home" ] && [ -d "$search_home" ]; then
+              pdfium_path=$(find "$search_home" -maxdepth 8 -name "$name" 2>/dev/null | head -1)
+            fi
+          fi
+          if [ -z "$pdfium_path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/, the pdfium-rs download cache, or a bounded search under \$HOME"
             exit 1
           fi
+          echo "found $name at $pdfium_path"
           wheel_path=$(find bindings/python/dist -name "*.whl")
           command -v python3 >/dev/null 2>&1 && PY=python3 || PY=python
           "$PY" scripts/bundle_pdfium_into_wheel.py "$wheel_path" "$pdfium_path" redact_paperasse
