@@ -95,6 +95,26 @@ jobs:
         working-directory: bindings/node
       - run: npx napi build --platform
         working-directory: bindings/node
+      # liteparse-pdfium loads PDFium at runtime via dlopen with no
+      # link-time dependency at all, so a Swatinem/rust-cache hit can mean
+      # liteparse-pdfium-sys's build script (the only thing that downloads
+      # it) never re-runs, even though the cached .rlib satisfies the
+      # compiler fine — leaving no pdfium binary anywhere on the runner.
+      # Hit this for real: example.mjs's redactImage call panicked with
+      # "could not find pdfium shared library" on a cache-hit run. Same
+      # fix as publish.yml's identical problem: download the release
+      # directly rather than depend on build.rs having fetched it this
+      # session, then bundle it next to the compiled .node (the crate's
+      # own runtime search order already checks "next to the native
+      # extension module" via dladdr).
+      - name: Download the pdfium shared library directly
+        working-directory: bindings/node
+        run: |
+          set -euo pipefail
+          curl -sL --fail -o pdfium.tgz "https://github.com/run-llama/pdfium-binaries/releases/download/chromium%2F7897/pdfium-linux-x64.tgz"
+          mkdir -p pdfium-extract
+          tar -xzf pdfium.tgz -C pdfium-extract
+          cp pdfium-extract/lib/libpdfium.so .
       - name: Run the real example against the built native addon
         run: node example.mjs
         working-directory: bindings/node
