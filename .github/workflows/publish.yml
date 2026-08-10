@@ -52,11 +52,29 @@ name: Publish
 # simulate a foreign machine: both redact_image (Python, via a locally
 # patched wheel in a fresh venv) and redactImage (Node, via an isolated
 # directory with just the .node file) failed without the bundled library
-# and succeeded with it. NOT yet verified: the CI steps that do this
-# bundling automatically (the logic is the same as what was hand-verified,
-# but the actual `find target -path "*/release/deps/*"` lookup inside a
-# real CI checkout, and the Linux wheel case specifically where the build
-# runs inside a maturin-action manylinux container, haven't run for real).
+# and succeeded with it.
+#
+# v0.1.1 real tag run (2026-08-10): crates.io and PyPI both fully
+# succeeded -- all 3 wheels built AND bundled pdfium correctly (confirmed
+# live on crates.io's dashboard and by the pypi-build job's own success).
+# But all 4 completed npm-build legs failed at the pdfium-locate step with
+# "could not find libpdfium.dylib under target/**/release/deps/" -- a real
+# race in liteparse-pdfium-sys's own build.rs, not something wrong with the
+# locate command itself: it only copies pdfium into target/<profile>/deps/
+# if that directory already exists at the moment its build script runs,
+# and evidently napi build's crate compilation order reaches that build
+# script before cargo has created deps/ yet, consistently, while maturin's
+# build order doesn't hit the same race. Fixed by falling back to the
+# crate's own pdfium download cache directory
+# (~/Library/Caches/pdfium-rs, ~/.cache/pdfium-rs, or
+# %LOCALAPPDATA%/pdfium-rs), which build.rs always populates first
+# regardless of that race -- applied to both npm-build's and pypi-build's
+# locate steps for consistency, though pypi-build's Linux leg specifically
+# runs inside a maturin-action manylinux container where this fallback's
+# reliability is NOT yet confirmed (the container's $HOME may not be part
+# of the mounted workspace) -- moot for this release since that leg
+# already succeeded via the primary target/deps/ path before hitting the
+# race at all.
 on:
   push:
     tags:
@@ -159,9 +177,23 @@ jobs:
             *-linux-gnu) name="libpdfium.so" ;;
             *-windows-msvc) name="pdfium.dll" ;;
           esac
-          path=$(find target -name "$name" -path "*/release/deps/*" | head -1)
+          path=$(find target -name "$name" -path "*/release/deps/*" 2>/dev/null | head -1)
+          # liteparse-pdfium-sys's build.rs only copies pdfium into
+          # target/<profile>/deps/ if that directory already exists at the
+          # moment its build script runs -- found for real on a cold CI
+          # cache, where it doesn't yet (build scripts run before cargo has
+          # populated deps/ with anything), so the copy silently never
+          # happens. Fall back to the crate's own download cache, which
+          # build.rs always populates first regardless of that race.
           if [ -z "$path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/"
+            for cache_root in "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
+              [ -d "$cache_root" ] || continue
+              path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
+              [ -n "$path" ] && break
+            done
+          fi
+          if [ -z "$path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/ or the pdfium-rs download cache"
             exit 1
           fi
           cp "$path" "bindings/node/$name"
@@ -337,9 +369,30 @@ jobs:
             *-linux-gnu) name="libpdfium.so" ;;
             *-windows-msvc) name="pdfium.dll" ;;
           esac
-          pdfium_path=$(find target -name "$name" -path "*/release/deps/*" | head -1)
+          pdfium_path=$(find target -name "$name" -path "*/release/deps/*" 2>/dev/null | head -1)
+          # liteparse-pdfium-sys's build.rs only copies pdfium into
+          # target/<profile>/deps/ if that directory already exists at the
+          # moment its build script runs -- found for real on a cold CI
+          # cache (a native npm-build macOS leg, not this job, but the same
+          # crate/build.rs), where it doesn't yet, so the copy silently
+          # never happens. Fall back to the crate's own download cache,
+          # which build.rs always populates first regardless of that race.
+          # NOTE: for the Linux leg specifically, this build runs inside a
+          # manylinux container -- if that container's $HOME isn't part of
+          # the mounted workspace, this fallback won't see anything
+          # written there, and this whole step fails loudly rather than
+          # silently shipping an unfixed wheel. Not yet confirmed either
+          # way; the macOS/Windows legs run natively so this fallback is
+          # solid for those.
           if [ -z "$pdfium_path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/"
+            for cache_root in "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
+              [ -d "$cache_root" ] || continue
+              pdfium_path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
+              [ -n "$pdfium_path" ] && break
+            done
+          fi
+          if [ -z "$pdfium_path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/ or the pdfium-rs download cache"
             exit 1
           fi
           wheel_path=$(find bindings/python/dist -name "*.whl")
