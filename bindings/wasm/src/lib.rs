@@ -95,3 +95,33 @@ pub async fn redact_image(
         .bytes
         .ok_or_else(|| JsError::new("Engine::process returned no bytes for an Image input"))
 }
+
+/// Redact PII from a plain image (jpg/png/…) and return the OCR'd redacted
+/// text directly — no pixel step. `Engine::process`'s `OutputFormat::Markdown`
+/// branch runs before the input-type match, so this OCRs via liteparse,
+/// finds PII in the OCR'd text via Tier A, and returns the redacted result
+/// as text, skipping the bounding-box/pixel-drawing work `redactImage`
+/// does. Same OCR-availability caveat as `redactImage`: bundled Tesseract
+/// is unavailable in a wasm32 build, so this needs `ocr_server_url`
+/// configured, which isn't exposed at this binding layer yet.
+#[wasm_bindgen(js_name = redactImageText)]
+pub async fn redact_image_text(
+    bytes: Vec<u8>,
+    entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
+) -> Result<String, JsError> {
+    #[cfg(feature = "console_error_panic_hook")]
+    console_error_panic_hook::set_once();
+
+    let engine = Engine::default();
+    let result = engine
+        .process(
+            Input::Image(bytes),
+            OutputFormat::Markdown,
+            entities.as_deref(),
+            score_threshold,
+        )
+        .await
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    Ok(result.markdown.or(result.text).unwrap_or_default())
+}

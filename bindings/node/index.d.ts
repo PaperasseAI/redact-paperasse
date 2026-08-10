@@ -24,10 +24,14 @@ export interface RedactTextOptions {
   scoreThreshold?: number
 }
 /**
- * Options for `redactImage`/`redactPdf`. Same filters as `RedactTextOptions`
- * minus `markdown` — these two always return pixel-redacted bytes (that's
- * the point of calling them specifically); OCR'd-and-redacted markdown
- * text from an image/PDF isn't exposed at this binding layer yet.
+ * Options for `redactImage`/`redactPdf`/`redactImageText`/`redactPdfText`.
+ * Same filters as `RedactTextOptions` minus `markdown`: `redactImage`/
+ * `redactPdf` always return pixel-redacted bytes (no markdown/native
+ * choice — that's the point of calling them specifically), and
+ * `redactImageText`/`redactPdfText` always return OCR'd redacted text
+ * (there's no meaningful "native" alternative to toggle to for those --
+ * `OutputFormat::Native` means pixel bytes for an image/PDF input, not
+ * plain text, so a `markdown` flag here would be misleading).
  */
 export interface RedactBytesOptions {
   /**
@@ -69,3 +73,22 @@ export declare function redactImage(bytes: Buffer, options?: RedactBytesOptions 
  * doesn't exist in its wasm32 build (an upstream constraint).
  */
 export declare function redactPdf(bytes: Buffer, options?: RedactBytesOptions | undefined | null): Promise<Buffer>
+/**
+ * Redact PII from a plain image (jpg/png/…) and return the OCR'd redacted
+ * text directly — no pixel step. `Engine::process`'s `OutputFormat::Markdown`
+ * branch runs before the input-type match, so this OCRs via liteparse,
+ * finds PII in the OCR'd text via Tier A, and returns the redacted result
+ * as text, skipping the bounding-box/pixel-drawing work `redactImage` does.
+ * Cheaper than `redactImage` when an agent only needs the text content,
+ * not a redacted image to display.
+ */
+export declare function redactImageText(bytes: Buffer, options?: RedactBytesOptions | undefined | null): Promise<string>
+/**
+ * Redact PII from a PDF and return the OCR'd redacted text directly — no
+ * pixel step, no page-image reassembly. Same reasoning as
+ * `redactImageText`: `OutputFormat::Markdown` short-circuits
+ * `Engine::process` before it reaches the pixel-redaction path.
+ *
+ * Not available in the WASM binding, same constraint as `redactPdf`.
+ */
+export declare function redactPdfText(bytes: Buffer, options?: RedactBytesOptions | undefined | null): Promise<string>

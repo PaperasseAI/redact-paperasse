@@ -310,8 +310,10 @@ if (!nativeBinding) {
   throw new Error(`Failed to load native binding`)
 }
 
-const { redactText, redactImage, redactPdf } = nativeBinding
+const { redactText, redactImage, redactPdf, redactImageText, redactPdfText } = nativeBinding
 
 module.exports.redactText = redactText
 module.exports.redactImage = redactImage
 module.exports.redactPdf = redactPdf
+module.exports.redactImageText = redactImageText
+module.exports.redactPdfText = redactPdfText

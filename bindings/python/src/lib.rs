@@ -112,10 +112,72 @@ fn redact_pdf(
     })
 }
 
+/// Redact PII from a plain image (jpg/png/…) and return the OCR'd redacted
+/// text directly — no pixel step. `Engine::process`'s `OutputFormat::Markdown`
+/// branch runs before the input-type match, so this OCRs via liteparse,
+/// finds PII in the OCR'd text via Tier A, and returns the redacted result
+/// as text, skipping the bounding-box/pixel-drawing work `redact_image`
+/// does. Cheaper than `redact_image` when you only need the text content,
+/// not a redacted image to display. No `markdown` parameter: unlike
+/// `redact_text`, there's no meaningful "native" alternative to toggle to
+/// here -- `OutputFormat::Native` means pixel bytes for an image input, not
+/// plain text.
+#[pyfunction]
+#[pyo3(signature = (image_bytes, entities=None, score_threshold=None))]
+fn redact_image_text(
+    py: Python<'_>,
+    image_bytes: Vec<u8>,
+    entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
+) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let engine = Engine::default();
+        let result = engine
+            .process(
+                Input::Image(image_bytes),
+                OutputFormat::Markdown,
+                entities.as_deref(),
+                score_threshold,
+            )
+            .await
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(result.markdown.or(result.text).unwrap_or_default())
+    })
+}
+
+/// Redact PII from a PDF and return the OCR'd redacted text directly — no
+/// pixel step, no page-image reassembly. Same reasoning as
+/// `redact_image_text`: `OutputFormat::Markdown` short-circuits
+/// `Engine::process` before it reaches the pixel-redaction path.
+#[pyfunction]
+#[pyo3(signature = (pdf_bytes, entities=None, score_threshold=None))]
+fn redact_pdf_text(
+    py: Python<'_>,
+    pdf_bytes: Vec<u8>,
+    entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
+) -> PyResult<Bound<'_, PyAny>> {
+    pyo3_async_runtimes::tokio::future_into_py(py, async move {
+        let engine = Engine::default();
+        let result = engine
+            .process(
+                Input::Pdf(pdf_bytes),
+                OutputFormat::Markdown,
+                entities.as_deref(),
+                score_threshold,
+            )
+            .await
+            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        Ok(result.markdown.or(result.text).unwrap_or_default())
+    })
+}
+
 #[pymodule]
 fn redact_paperasse(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(redact_text, m)?)?;
     m.add_function(wrap_pyfunction!(redact_image, m)?)?;
     m.add_function(wrap_pyfunction!(redact_pdf, m)?)?;
+    m.add_function(wrap_pyfunction!(redact_image_text, m)?)?;
+    m.add_function(wrap_pyfunction!(redact_pdf_text, m)?)?;
     Ok(())
 }
