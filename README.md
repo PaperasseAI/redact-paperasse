@@ -2,6 +2,10 @@
 
 A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, or text out. For the text path, markdown is the default output shape (agents parse it best) — pass `markdown: false` to get plain text back instead. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
+![redact-paperasse: image, PDF, and text/markdown in, redacted out](assets/demo.gif)
+
+*Every frame above is real tool output — the same fixtures and CLI runs used throughout this README, not a mockup.*
+
 > **Status: early, but working.** `cargo test --workspace` passes (56 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
