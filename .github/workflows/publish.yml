@@ -9,72 +9,52 @@ name: Publish
 # Requires three repo secrets — CARGO_REGISTRY_TOKEN, NPM_TOKEN,
 # PYPI_API_TOKEN — all configured.
 #
-# Release history:
+# Release history (abbreviated -- see git log for the full blow-by-blow):
 #
-# v0.1.0 (2026-08-10, tag push): found and fixed three genuine CI bugs
-# this had never been exercised against before -- linux-arm64-gnu's zig
-# cross-compile couldn't find OpenSSL headers for the target arch (fixed by
-# switching to a native ubuntu-24.04-arm runner instead of cross-compiling);
-# macOS's runner defaults to Python 3.14, newer than PyO3 0.23's known-
-# version list (fixed with the abi3-py39 feature +
-# PYO3_USE_ABI3_FORWARD_COMPATIBILITY); the Linux PyPI wheel's
-# before-script-linux ran apt-get as non-root and hit a lock-file
-# permission error (fixed with sudo). Also found, not a bug: macos-13
-# (Intel) sat queued for over an hour with zero GitHub-side runner
-# availability -- npm-publish/pypi-publish now run with
-# `if: ${{ !cancelled() }}` and skip any platform that didn't produce a
-# binary, so a stuck runner degrades to "ships next release" instead of
-# blocking everything; each matrix leg also has a 45m timeout for the same
-# reason.
+# v0.1.0: real tag-push and workflow_dispatch runs found and fixed real CI
+# bugs no amount of local testing could have caught -- linux-arm64-gnu's
+# zig cross-compile couldn't find OpenSSL headers (fixed: native
+# ubuntu-24.04-arm runner instead of cross-compiling); macOS's runner
+# defaults to a Python newer than PyO3's known-version list (fixed:
+# abi3-py39 + PYO3_USE_ABI3_FORWARD_COMPATIBILITY); the Linux PyPI wheel's
+# before-script-linux ran apt-get as non-root (fixed: sudo); macos-13
+# (Intel) sat queued for over an hour with zero runner availability, not a
+# workflow bug (mitigated: npm-publish/pypi-publish run with
+# `if: ${{ !cancelled() }}` and skip any platform that didn't build, so a
+# stuck runner degrades to "ships next release" instead of blocking
+# everything; each matrix leg has a 45m timeout for the same reason).
+# PyPI published for real and was verified independently (installed from
+# PyPI into a fresh venv). npm never got as far as npm-publish.
 #
-# v0.1.0 (2026-08-10, workflow_dispatch re-run with those three fixes):
-# confirmed all three fixes work -- PyPI published all 3 wheels for real
-# (verified independently by installing from PyPI into a fresh venv), and
-# 4 of 5 npm platforms built (darwin-arm64, linux-x64-gnu, linux-arm64-gnu,
-# win32-x64-msvc); darwin-x64 (macos-13) got stuck queued again, same
-# runner-pool issue, not a workflow bug. npm-publish's own actual publish
-# steps still hadn't run yet at this point (npm-build hadn't reached
-# "completed" for the whole matrix).
-#
-# v0.1.1 (not yet released): fixes a real, more serious bug that surfaced
-# from that PyPI verification -- installing v0.1.0 from PyPI into a fresh
-# venv and calling redact_image/redact_pdf panicked with "could not find
-# pdfium shared library". liteparse-pdfium loads PDFium at runtime via
-# dlopen, invisible to maturin's/napi's automatic shared-library bundling
-# (which only sees link-time deps), so the compiled extension shipped
-# without its runtime dependency on every machine except the one that built
-# it. Fixed in both pypi-build (scripts/bundle_pdfium_into_wheel.py) and
-# npm-build/npm-publish (a locate-and-place step) by bundling the pdfium
-# library next to the compiled extension, which the crate's own search
-# order already checks for (self_dir() via dladdr/GetModuleHandleExW) --
-# no runtime code changes needed, just packaging. Verified for real on this
-# machine for both bindings by hiding the local pdfium cache dir to
-# simulate a foreign machine: both redact_image (Python, via a locally
-# patched wheel in a fresh venv) and redactImage (Node, via an isolated
-# directory with just the .node file) failed without the bundled library
-# and succeeded with it.
-#
-# v0.1.1 real tag run (2026-08-10): crates.io and PyPI both fully
-# succeeded -- all 3 wheels built AND bundled pdfium correctly (confirmed
-# live on crates.io's dashboard and by the pypi-build job's own success).
-# But all 4 completed npm-build legs failed at the pdfium-locate step with
-# "could not find libpdfium.dylib under target/**/release/deps/" -- a real
-# race in liteparse-pdfium-sys's own build.rs, not something wrong with the
-# locate command itself: it only copies pdfium into target/<profile>/deps/
-# if that directory already exists at the moment its build script runs,
-# and evidently napi build's crate compilation order reaches that build
-# script before cargo has created deps/ yet, consistently, while maturin's
-# build order doesn't hit the same race. Fixed by falling back to the
-# crate's own pdfium download cache directory
-# (~/Library/Caches/pdfium-rs, ~/.cache/pdfium-rs, or
-# %LOCALAPPDATA%/pdfium-rs), which build.rs always populates first
-# regardless of that race -- applied to both npm-build's and pypi-build's
-# locate steps for consistency, though pypi-build's Linux leg specifically
-# runs inside a maturin-action manylinux container where this fallback's
-# reliability is NOT yet confirmed (the container's $HOME may not be part
-# of the mounted workspace) -- moot for this release since that leg
-# already succeeded via the primary target/deps/ path before hitting the
-# race at all.
+# v0.1.1: fixes a real, more serious bug surfaced by that PyPI
+# verification -- redact_image/redact_pdf panicked with "could not find
+# pdfium shared library" on every machine except the one that built the
+# wheel. liteparse-pdfium loads PDFium at runtime via dlopen, invisible to
+# maturin's/napi's automatic shared-library bundling, so the compiled
+# extension shipped without its own runtime dependency. The real tag-push
+# run for this fix then hit its own bug: every attempt to *find* a pdfium
+# binary build.rs supposedly produced that session failed on npm-build,
+# even after three different fallback strategies. Diagnostics revealed why
+# no amount of searching would ever work: with a Swatinem/rust-cache hit,
+# cargo's fingerprint check can skip rebuilding liteparse-pdfium-sys
+# entirely (its compiled .rlib satisfies the compiler fine, since pdfium
+# has no link-time dependency at all -- only a runtime dlopen one), so its
+# build script -- the only thing that downloads pdfium -- never runs, and
+# no pdfium binary exists anywhere on the filesystem that session, full
+# stop. Fixed by not depending on build.rs having run at all: both
+# npm-build and pypi-build now download the exact same pdfium release
+# directly (same URL/tag/asset-naming build.rs itself uses -- see
+# liteparse-pdfium-sys's build.rs for the reference), then bundle it next
+# to the compiled extension, which the crate's own runtime search order
+# already checks for (self_dir() via dladdr/GetModuleHandleExW). The
+# bundling mechanism itself (as opposed to the CI step that feeds it a
+# file) was verified for real on this machine for both bindings: hid the
+# local pdfium cache dir to simulate a foreign machine, confirmed
+# redact_image (Python, patched wheel in a fresh venv) and redactImage
+# (Node, isolated directory) both fail without the bundled library and
+# succeed with it. crates.io and PyPI both fully succeeded on the real
+# v0.1.1 tag run before any of this was needed; npm is what required all
+# of the above.
 on:
   push:
     tags:
@@ -168,66 +148,37 @@ jobs:
       # locally by hiding this machine's pdfium cache dir to simulate a
       # foreign machine and confirming redactImage fails without the
       # bundled copy and succeeds with it.
-      - name: Locate the pdfium shared library this build produced
+      # Three straight guesses at *finding* a pdfium binary build.rs
+      # supposedly produced this session all failed on real CI runs (see
+      # this workflow's git history for each) -- diagnostics on the third
+      # attempt revealed why no amount of searching would ever have worked:
+      # target/ had liteparse-pdfium-sys's compiled .rlib/.rmeta (from
+      # Swatinem/rust-cache restoring a warm cache) but NO pdfium binary
+      # anywhere on the filesystem at all. Runtime pdfium loading has no
+      # link-time dependency (it's dlopen'd, see liteparse-pdfium-sys's own
+      # build.rs), so a cache-hit crate satisfies the compiler fully
+      # without its build script ever re-running -- meaning the download
+      # step that would populate deps/ or the cache dir simply never
+      # executes. Fix: stop depending on build.rs having run at all this
+      # session. Download the exact same release directly -- same URL,
+      # same tag, same asset naming build.rs itself uses -- independent of
+      # any cargo/cache state.
+      - name: Download the pdfium shared library directly
         id: pdfium
         shell: bash
         run: |
+          set -euo pipefail
           case "${{ matrix.target }}" in
-            *-apple-darwin) name="libpdfium.dylib" ;;
-            *-linux-gnu) name="libpdfium.so" ;;
-            *-windows-msvc) name="pdfium.dll" ;;
+            x86_64-apple-darwin) asset=pdfium-mac-x64; name=libpdfium.dylib; subdir=lib ;;
+            aarch64-apple-darwin) asset=pdfium-mac-arm64; name=libpdfium.dylib; subdir=lib ;;
+            x86_64-unknown-linux-gnu) asset=pdfium-linux-x64; name=libpdfium.so; subdir=lib ;;
+            aarch64-unknown-linux-gnu) asset=pdfium-linux-arm64; name=libpdfium.so; subdir=lib ;;
+            x86_64-pc-windows-msvc) asset=pdfium-win-x64; name=pdfium.dll; subdir=bin ;;
           esac
-          path=$(find target -name "$name" -path "*/release/deps/*" 2>/dev/null | head -1)
-          # liteparse-pdfium-sys's build.rs only copies pdfium into
-          # target/<profile>/deps/ if that directory already exists at the
-          # moment its build script runs -- found for real on a cold CI
-          # cache, where it doesn't yet (build scripts run before cargo has
-          # populated deps/ with anything), so the copy silently never
-          # happens. Fall back to the crate's own download cache, which
-          # build.rs always populates first regardless of that race.
-          # First guess is build.rs's own cache-dir priority order (its
-          # dirs_cache(): $XDG_CACHE_HOME if set, else ~/Library/Caches on
-          # macOS, ~/.cache elsewhere, or %LOCALAPPDATA% on Windows) --
-          # tried this exact set on the first real release attempt and it
-          # still failed on Linux, meaning some assumption here (most
-          # likely XDG_CACHE_HOME being preset to something else on that
-          # runner) was wrong. Falls through to a bounded find under $HOME
-          # for the filename directly, which works regardless of exactly
-          # which of those paths build.rs actually used.
-          if [ -z "$path" ]; then
-            for cache_root in "${XDG_CACHE_HOME:-}/pdfium-rs" "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
-              [ -d "$cache_root" ] || continue
-              path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
-              [ -n "$path" ] && break
-            done
-          fi
-          if [ -z "$path" ]; then
-            search_home="${HOME:-${USERPROFILE:-}}"
-            if [ -n "$search_home" ] && [ -d "$search_home" ]; then
-              path=$(find "$search_home" -maxdepth 8 -name "$name" 2>/dev/null | head -1)
-            fi
-          fi
-          # Every guess so far has failed on real CI runs (see this
-          # workflow's header comment for the history) -- rather than
-          # guess a fourth time, dump real ground truth on failure so the
-          # next fix is based on data, not another guess.
-          if [ -z "$path" ]; then
-            echo "::group::pdfium locate diagnostics"
-            echo "--- HOME=$HOME  XDG_CACHE_HOME=${XDG_CACHE_HOME:-<unset>}  LOCALAPPDATA=${LOCALAPPDATA:-<unset>} ---"
-            echo "--- every *pdfium* file under target/ ---"
-            find target -iname "*pdfium*" 2>/dev/null
-            echo "--- every *pdfium* file under \$HOME (maxdepth 10) ---"
-            find "${HOME:-/nonexistent}" -maxdepth 10 -iname "*pdfium*" 2>/dev/null
-            echo "--- every *pdfium* file anywhere under / (maxdepth 6, best effort) ---"
-            find / -maxdepth 6 -iname "*pdfium*" 2>/dev/null
-            echo "::endgroup::"
-          fi
-          if [ -z "$path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/, the pdfium-rs download cache, or a bounded search under \$HOME"
-            exit 1
-          fi
-          echo "found $name at $path"
-          cp "$path" "bindings/node/$name"
+          curl -sL --fail -o pdfium.tgz "https://github.com/run-llama/pdfium-binaries/releases/download/chromium%2F7897/${asset}.tgz"
+          mkdir -p pdfium-extract
+          tar -xzf pdfium.tgz -C pdfium-extract
+          cp "pdfium-extract/${subdir}/${name}" "bindings/node/${name}"
           echo "name=$name" >> "$GITHUB_OUTPUT"
       # `napi artifacts` (run in npm-publish) only picks up files named
       # `<binaryName>.<platformArchABI>.node` from this artifact; the
@@ -391,51 +342,31 @@ jobs:
       # hash/size entry to match -- verified for real: patched a locally
       # built wheel this exact way, installed it in a fresh venv, and
       # confirmed redact_image/redact_pdf work.
-      - name: Bundle libpdfium into the wheel
+      #
+      # Downloads the library directly rather than hunting for whatever
+      # build.rs may or may not have produced this session -- see
+      # npm-build's identical step for why "find whatever build.rs made"
+      # doesn't work reliably (a Swatinem/rust-cache hit can mean build.rs
+      # never re-runs at all, downloading nothing). This step runs on the
+      # host runner, not inside maturin-action's manylinux container, so
+      # it's unaffected by the container's own $HOME/filesystem either way.
+      - name: Download the pdfium shared library directly
         shell: bash
         run: |
           set -euo pipefail
           case "${{ matrix.target }}" in
-            *-apple-darwin) name="libpdfium.dylib" ;;
-            *-linux-gnu) name="libpdfium.so" ;;
-            *-windows-msvc) name="pdfium.dll" ;;
+            x86_64-apple-darwin) asset=pdfium-mac-x64; name=libpdfium.dylib; subdir=lib ;;
+            aarch64-apple-darwin) asset=pdfium-mac-arm64; name=libpdfium.dylib; subdir=lib ;;
+            x86_64-unknown-linux-gnu) asset=pdfium-linux-x64; name=libpdfium.so; subdir=lib ;;
+            aarch64-unknown-linux-gnu) asset=pdfium-linux-arm64; name=libpdfium.so; subdir=lib ;;
+            x86_64-pc-windows-msvc) asset=pdfium-win-x64; name=pdfium.dll; subdir=bin ;;
           esac
-          pdfium_path=$(find target -name "$name" -path "*/release/deps/*" 2>/dev/null | head -1)
-          # liteparse-pdfium-sys's build.rs only copies pdfium into
-          # target/<profile>/deps/ if that directory already exists at the
-          # moment its build script runs -- found for real on a cold CI
-          # cache (a native npm-build macOS leg, not this job, but the same
-          # crate/build.rs), where it doesn't yet, so the copy silently
-          # never happens. Fall back to the crate's own download cache,
-          # which build.rs always populates first regardless of that race.
-          # NOTE: for the Linux leg specifically, this build runs inside a
-          # manylinux container -- if that container's $HOME isn't part of
-          # the mounted workspace, this fallback won't see anything
-          # written there, and this whole step fails loudly rather than
-          # silently shipping an unfixed wheel. Not yet confirmed either
-          # way; the macOS/Windows legs run natively so this fallback is
-          # solid for those.
-          if [ -z "$pdfium_path" ]; then
-            for cache_root in "${XDG_CACHE_HOME:-}/pdfium-rs" "$HOME/Library/Caches/pdfium-rs" "$HOME/.cache/pdfium-rs" "${LOCALAPPDATA:-}/pdfium-rs"; do
-              [ -d "$cache_root" ] || continue
-              pdfium_path=$(find "$cache_root" -name "$name" 2>/dev/null | head -1)
-              [ -n "$pdfium_path" ] && break
-            done
-          fi
-          if [ -z "$pdfium_path" ]; then
-            search_home="${HOME:-${USERPROFILE:-}}"
-            if [ -n "$search_home" ] && [ -d "$search_home" ]; then
-              pdfium_path=$(find "$search_home" -maxdepth 8 -name "$name" 2>/dev/null | head -1)
-            fi
-          fi
-          if [ -z "$pdfium_path" ]; then
-            echo "::error::could not find $name under target/**/release/deps/, the pdfium-rs download cache, or a bounded search under \$HOME"
-            exit 1
-          fi
-          echo "found $name at $pdfium_path"
+          curl -sL --fail -o pdfium.tgz "https://github.com/run-llama/pdfium-binaries/releases/download/chromium%2F7897/${asset}.tgz"
+          mkdir -p pdfium-extract
+          tar -xzf pdfium.tgz -C pdfium-extract
           wheel_path=$(find bindings/python/dist -name "*.whl")
           command -v python3 >/dev/null 2>&1 && PY=python3 || PY=python
-          "$PY" scripts/bundle_pdfium_into_wheel.py "$wheel_path" "$pdfium_path" redact_paperasse
+          "$PY" scripts/bundle_pdfium_into_wheel.py "$wheel_path" "pdfium-extract/${subdir}/${name}" redact_paperasse
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}
