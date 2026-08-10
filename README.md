@@ -110,7 +110,13 @@ All three bindings now expose pixel redaction directly, not just `redactText`: N
 
 ## Publishing
 
-`.github/workflows/publish.yml` builds and publishes to crates.io, npm, and PyPI on a `vX.Y.Z` tag push — see that file's header comment for the required repo secrets and, importantly, which parts of it (the multi-platform matrix builds) haven't actually been exercised by a real release yet, as distinct from `ci.yml`'s checks, which run and are verified on every push.
+`.github/workflows/publish.yml` builds and publishes to crates.io, npm, and PyPI on a `vX.Y.Z` tag push — see that file's header comment for the required repo secrets and, importantly, which parts of it haven't actually been exercised by a real release yet, as distinct from `ci.yml`'s checks, which run and are verified on every push.
+
+**crates.io: live.** [`redact-paperasse-recognizers`](https://crates.io/crates/redact-paperasse-recognizers), [`redact-paperasse-core`](https://crates.io/crates/redact-paperasse-core), and [`redact-paperasse-cli`](https://crates.io/crates/redact-paperasse-cli) are all published at v0.1.0 — `cargo install redact-paperasse-cli` gets you the `redactpapr` binary today.
+
+**npm: infrastructure ready, not yet published.** The package follows napi-rs's standard multi-platform layout: the root `redact-paperasse` package ships only JS/TS (no bundled binary — see its `files` field) and depends on five per-platform packages (`redact-paperasse-{darwin-x64,darwin-arm64,linux-x64-gnu,linux-arm64-gnu,win32-x64-msvc}`) via `optionalDependencies`, so npm installs only the one matching the host at install time. `bindings/node/npm/*/` (scaffolded by `napi create-npm-dir`, committed) holds each platform's `package.json`; the actual `.node` binaries are built and dropped in there by CI's matrix (or `napi build --platform --release <dir>` locally) and are gitignored, never committed. Only `darwin-arm64` has actually been built (locally, verified to load with the right exports) — the other four need their native OS/toolchain, which only GitHub's CI runners provide here; publishing needs `NPM_TOKEN` configured as a repo secret and a real tag push.
+
+**PyPI: not started.** No wheel has been built yet, verified or otherwise.
 
 ## License
 

@@ -1,0 +1,20 @@
+{
+  "name": "redact-paperasse-linux-x64-gnu",
+  "version": "0.1.0",
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.linux-x64-gnu.node",
+  "files": [
+    "index.linux-x64-gnu.node"
+  ],
+  "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
+  "license": "MIT",
+  "repository": "https://github.com/PaperasseAI/redact-paperasse",
+  "libc": [
+    "glibc"
+  ]
+}

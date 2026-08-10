@@ -6,17 +6,28 @@ name: Publish
 # the already-committed Cargo.toml/package.json/pyproject.toml, this
 # workflow doesn't bump versions itself).
 #
-# Requires three repo secrets, none of which are configured yet:
-#   CARGO_REGISTRY_TOKEN — crates.io API token
-#   NPM_TOKEN             — npm automation token for the @paperasse org
-#   PYPI_API_TOKEN         — PyPI API token (or switch to trusted publishing)
+# Requires three repo secrets:
+#   CARGO_REGISTRY_TOKEN — crates.io API token. Not needed urgently: the
+#     three publishable crates (recognizers/core/cli) are already live on
+#     crates.io v0.1.0, published manually in the same dependency order
+#     this job uses. Configure this before the next version bump.
+#   NPM_TOKEN — npm automation token. Not yet configured — this is what's
+#     blocking an actual npm release right now.
+#   PYPI_API_TOKEN — PyPI API token (or switch to trusted publishing). Not
+#     yet configured.
 #
 # Unlike ci.yml, this pipeline hasn't been exercised end to end (no tag has
 # been pushed) — it's built from napi-rs's and maturin's own documented CI
-# patterns, but the multi-platform matrix builds (especially the Linux PyPI
-# wheel, built inside a manylinux container where liteparse's cmake/tesseract
-# build dependency needs a separate install hook) should be treated as
-# unverified until a real release actually runs this.
+# patterns. What's been verified locally, outside this workflow: the
+# darwin-arm64 native addon builds in release mode, lands correctly in
+# npm/darwin-arm64/, and loads with the right exports (redactText/
+# redactImage/redactPdf). NOT verified: the other four platforms (need
+# their own OS/toolchain — that's the whole reason this is a CI matrix, not
+# a local build), the linux-arm64-gnu zig cross-compile step specifically,
+# `napi artifacts`' recursive-crawl artifact placement across a real
+# multi-job download, and the Linux PyPI wheel's manylinux-container
+# cmake/tesseract install hook. Treat all of that as unverified until a
+# real tagged release actually runs it.
 on:
   push:
     tags:
@@ -59,6 +70,12 @@ jobs:
             target: aarch64-apple-darwin
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            # No native aarch64 Linux runner in the free tier — cross-compile
+            # from x64 using napi-rs's own zig-based cross toolchain instead
+            # of a separate arm64 runner or a docker cross image.
+            zig: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -76,13 +93,20 @@ jobs:
       - name: Install native build dependencies (macOS)
         if: runner.os == 'macOS'
         run: brew install cmake pkg-config
+      - uses: goto-bus-stop/setup-zig@v2
+        if: matrix.zig
       - uses: actions/setup-node@v4
         with:
           node-version: 22
       - run: npm install
         working-directory: bindings/node
-      - run: npx napi build --platform --release --target ${{ matrix.target }}
+      - run: npx napi build --platform --release --target ${{ matrix.target }} ${{ matrix.zig && '--zig' || '' }}
         working-directory: bindings/node
+      # `napi artifacts` (run in npm-publish) crawls this directory
+      # recursively for files named `<binaryName>.<platformArchABI>.node` --
+      # it doesn't care about the folder structure the artifacts land in,
+      # only the filename `napi build` already produces, so a flat upload
+      # here is enough.
       - uses: actions/upload-artifact@v4
         with:
           name: napi-${{ matrix.target }}
@@ -100,13 +124,29 @@ jobs:
           registry-url: https://registry.npmjs.org
       - uses: actions/download-artifact@v4
         with:
+          pattern: napi-*
           path: bindings/node/artifacts
-      - name: Move every platform's .node file next to package.json
-        run: find bindings/node/artifacts -name "*.node" -exec mv {} bindings/node/ \;
       - run: npm install
         working-directory: bindings/node
+      # Sorts every downloaded .node file into its matching npm/<platform>/
+      # directory (scaffolded by `napi create-npm-dir`, committed to the
+      # repo) based on the filename `napi build` already produces --
+      # untested end to end since no tag has triggered this yet.
       - run: npx napi artifacts
         working-directory: bindings/node
+      # Each platform subpackage publishes independently (order doesn't
+      # matter between them, unlike crates.io's dependency chain), then the
+      # root package last, since its optionalDependencies reference them by
+      # the version being published now.
+      - name: Publish every platform subpackage
+        working-directory: bindings/node
+        run: |
+          for dir in npm/*/; do
+            echo "Publishing $(basename "$dir")"
+            npm publish "$dir" --access public
+          done
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
       - run: npm publish --provenance --access public
         working-directory: bindings/node
         env:

@@ -1,0 +1,17 @@
+{
+  "name": "redact-paperasse-win32-x64-msvc",
+  "version": "0.1.0",
+  "os": [
+    "win32"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "main": "index.win32-x64-msvc.node",
+  "files": [
+    "index.win32-x64-msvc.node"
+  ],
+  "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
+  "license": "MIT",
+  "repository": "https://github.com/PaperasseAI/redact-paperasse"
+}
