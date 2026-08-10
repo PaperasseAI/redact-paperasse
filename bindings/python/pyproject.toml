@@ -3,11 +3,11 @@ requires = ["maturin>=1.7,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "paperasse-privacy"
+name = "redact-paperasse"
 version = "0.1.0"
 description = "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 
 [tool.maturin]
-module-name = "paperasse_privacy"
+module-name = "redact_paperasse"

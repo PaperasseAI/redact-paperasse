@@ -1,5 +1,5 @@
-use paperasse_privacy_core::{Engine, Input, OutputFormat};
 use pyo3::prelude::*;
+use redact_paperasse_core::{Engine, Input, OutputFormat};
 
 /// Redact PII from plain text (Tier A: in-process regex+checksum
 /// recognizers, no network call). Markdown is the default output (this is
@@ -83,7 +83,7 @@ fn redact_image(
 /// Redact PII from a PDF: render every page (liteparse/PDFium), find PII
 /// via OCR + Tier A, black out matches, and reassemble a new PDF from the
 /// redacted page images. Deliberately flattens to an image-based PDF — see
-/// `redact_pdf_bytes`'s doc comment in `paperasse-privacy-core` for why
+/// `redact_pdf_bytes`'s doc comment in `redact-paperasse-core` for why
 /// that's the correct behavior for genuine redaction, not a limitation.
 /// Verified against a real document embedded in a PDF — see the repo
 /// README's "Build status" section.
@@ -113,7 +113,7 @@ fn redact_pdf(
 }
 
 #[pymodule]
-fn paperasse_privacy(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn redact_paperasse(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(redact_text, m)?)?;
     m.add_function(wrap_pyfunction!(redact_image, m)?)?;
     m.add_function(wrap_pyfunction!(redact_pdf, m)?)?;

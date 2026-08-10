@@ -1,6 +1,6 @@
 [package]
-name = "paperasse-privacy-python"
-description = "Python bindings for paperasse-privacy"
+name = "redact-paperasse-python"
+description = "Python bindings for redact-paperasse"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -11,11 +11,11 @@ version.workspace = true
 publish = false
 
 [lib]
-name = "paperasse_privacy"
+name = "redact_paperasse"
 crate-type = ["cdylib"]
 
 [dependencies]
-paperasse-privacy-core = { workspace = true }
+redact-paperasse-core = { workspace = true }
 pyo3 = { version = "0.23", features = ["extension-module"] }
 pyo3-async-runtimes = { version = "0.23", features = ["tokio-runtime"] }
 tokio = { workspace = true, features = ["rt-multi-thread"] }

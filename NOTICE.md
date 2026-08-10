@@ -1,6 +1,6 @@
 # Third-party licenses
 
-`paperasse-privacy` is MIT-licensed (see `LICENSE`). This is a summary of the
+`redact-paperasse` is MIT-licensed (see `LICENSE`). This is a summary of the
 licenses used by its dependency tree, generated with `cargo license
 --all-features` against the full workspace (native + wasm32 targets, every
 feature including `tier-b`) and checked for anything that would be
@@ -16,7 +16,7 @@ anywhere in the tree.** Two entries are worth calling out explicitly:
   rendering) are `MPL-2.0`, a weak (file-level) copyleft: it only requires
   that *modifications to MPL-covered files* be shared if distributed. Neither
   crate is forked or modified here, so this doesn't extend any obligation to
-  `paperasse-privacy`'s own code.
+  `redact-paperasse`'s own code.
 
 Regenerate this report with `cargo license --all-features` from the repo
 root; CI's `license-check` job (`.github/workflows/ci.yml`) re-runs it on

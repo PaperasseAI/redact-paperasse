@@ -33,7 +33,7 @@ jobs:
       - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
       - run: cargo test --workspace --locked
       - name: Check the tier-b feature builds standalone
-        run: cargo check -p paperasse-privacy-cli --features tier-b --locked
+        run: cargo check -p redact-paperasse-cli --features tier-b --locked
 
   wasm:
     name: Rust (wasm32)
@@ -53,7 +53,7 @@ jobs:
       # redaction is unavailable on this target regardless (liteparse's
       # own screenshot_input doesn't exist for wasm32), so the wasm binding
       # only exposes Tier A text redaction.
-      - run: cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -- -D warnings
+      - run: cargo clippy -p redact-paperasse-wasm --target wasm32-unknown-unknown -- -D warnings
 
   license-check:
     name: Dependency license audit

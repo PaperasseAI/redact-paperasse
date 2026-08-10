@@ -2508,72 +2508,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "paperasse-privacy-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "paperasse-privacy-core",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "paperasse-privacy-core"
-version = "0.1.0"
-dependencies = [
- "anydoc",
- "async-trait",
- "image",
- "liteparse",
- "paperasse-privacy-recognizers",
- "printpdf",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
-]
-
-[[package]]
-name = "paperasse-privacy-node"
-version = "0.1.0"
-dependencies = [
- "napi",
- "napi-build",
- "napi-derive",
- "paperasse-privacy-core",
- "tokio",
-]
-
-[[package]]
-name = "paperasse-privacy-python"
-version = "0.1.0"
-dependencies = [
- "paperasse-privacy-core",
- "pyo3",
- "pyo3-async-runtimes",
- "tokio",
-]
-
-[[package]]
-name = "paperasse-privacy-recognizers"
-version = "0.1.0"
-dependencies = [
- "regex",
-]
-
-[[package]]
-name = "paperasse-privacy-wasm"
-version = "0.1.0"
-dependencies = [
- "console_error_panic_hook",
- "paperasse-privacy-core",
- "wasm-bindgen",
- "wasm-bindgen-futures",
-]
-
-[[package]]
 name = "paste"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3146,6 +3080,72 @@ name = "reborrow"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
+
+[[package]]
+name = "redact-paperasse-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "redact-paperasse-core",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
+name = "redact-paperasse-core"
+version = "0.1.0"
+dependencies = [
+ "anydoc",
+ "async-trait",
+ "image",
+ "liteparse",
+ "printpdf",
+ "redact-paperasse-recognizers",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+]
+
+[[package]]
+name = "redact-paperasse-node"
+version = "0.1.0"
+dependencies = [
+ "napi",
+ "napi-build",
+ "napi-derive",
+ "redact-paperasse-core",
+ "tokio",
+]
+
+[[package]]
+name = "redact-paperasse-python"
+version = "0.1.0"
+dependencies = [
+ "pyo3",
+ "pyo3-async-runtimes",
+ "redact-paperasse-core",
+ "tokio",
+]
+
+[[package]]
+name = "redact-paperasse-recognizers"
+version = "0.1.0"
+dependencies = [
+ "regex",
+]
+
+[[package]]
+name = "redact-paperasse-wasm"
+version = "0.1.0"
+dependencies = [
+ "console_error_panic_hook",
+ "redact-paperasse-core",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+]
 
 [[package]]
 name = "regex"

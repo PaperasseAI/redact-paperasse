@@ -1,5 +1,5 @@
 //! Browser bindings. Verified against the real target:
-//! `cargo check --target wasm32-unknown-unknown -p paperasse-privacy-wasm`
+//! `cargo check --target wasm32-unknown-unknown -p redact-paperasse-wasm`
 //! passes clean (zero warnings) — see the repo README's "Build status" for
 //! what that took (a Cargo workspace-inheritance fix so liteparse's
 //! `tesseract` feature, which doesn't target wasm32, is off by default
@@ -9,7 +9,7 @@
 //! This binding therefore only exposes Tier A text redaction, which is
 //! exactly what runs client-side in a browser anyway.
 
-use paperasse_privacy_core::{Engine, Input, OutputFormat};
+use redact_paperasse_core::{Engine, Input, OutputFormat};
 use wasm_bindgen::prelude::*;
 
 /// Redact PII from plain text (Tier A: in-process regex+checksum
@@ -71,7 +71,7 @@ pub async fn redact_text(
 ///
 /// No `redactPdf` here: liteparse's PDF-to-raster rendering
 /// (`screenshot_input`) doesn't exist in its wasm32 build at all — a real
-/// upstream constraint, not a choice made here (see `paperasse-privacy-core`).
+/// upstream constraint, not a choice made here (see `redact-paperasse-core`).
 #[wasm_bindgen(js_name = redactImage)]
 pub async fn redact_image(
     bytes: Vec<u8>,

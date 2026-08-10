@@ -41,11 +41,11 @@ jobs:
       # publish gives crates.io's index time to catch up before the next
       # crate's `cargo publish` tries to resolve it as a registry dep
       # rather than a path dep.
-      - run: cargo publish -p paperasse-privacy-recognizers --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - run: cargo publish -p redact-paperasse-recognizers --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - run: sleep 30
-      - run: cargo publish -p paperasse-privacy-core --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - run: cargo publish -p redact-paperasse-core --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
       - run: sleep 30
-      - run: cargo publish -p paperasse-privacy-cli --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - run: cargo publish -p redact-paperasse-cli --locked --token ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
   npm-build:
     name: Build native addon (${{ matrix.target }})

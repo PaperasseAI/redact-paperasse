@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 
 use clap::{Parser, ValueEnum};
-use paperasse_privacy_core::{DocumentFormat, Engine, Input, OutputFormat};
+use redact_paperasse_core::{DocumentFormat, Engine, Input, OutputFormat};
 
 #[derive(Parser)]
 #[command(
-    name = "ppr",
+    name = "redactpapr",
     about = "Redact PII from images, PDFs, text, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV/...)"
 )]
 struct Cli {
@@ -184,7 +184,7 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// The manual ingest → Tier A + Tier B → merge → redact pipeline, composed
-/// from paperasse-privacy-core's public pieces instead of `Engine::process`
+/// from redact-paperasse-core's public pieces instead of `Engine::process`
 /// (which only knows about Tier A) — exactly the pattern `TierB`'s own doc
 /// comment describes: construct it, run it alongside Tier A, and merge.
 ///
@@ -198,10 +198,10 @@ async fn run_with_tier_b(
     cli: &Cli,
     input: Input,
     format: OutputFormat,
-) -> anyhow::Result<paperasse_privacy_core::RedactionResult> {
-    use paperasse_privacy_core::detect::{TierA, TierB};
-    use paperasse_privacy_core::redact::redact_text;
-    use paperasse_privacy_core::ExtractedDocument;
+) -> anyhow::Result<redact_paperasse_core::RedactionResult> {
+    use redact_paperasse_core::detect::{TierA, TierB};
+    use redact_paperasse_core::redact::redact_text;
+    use redact_paperasse_core::ExtractedDocument;
 
     let text = match input {
         Input::Text(text) => text,
@@ -222,7 +222,7 @@ async fn run_with_tier_b(
     let tier_b_entities = TierB::from_env()
         .analyze(&text, &cli.language)
         .await
-        .map_err(|e| anyhow::anyhow!("Tier B (Presidio) request failed: {e}. Set {} to point at a running presidio-analyzer, or drop --tier-b.", paperasse_privacy_core::detect::tier_b::ANALYZER_URL_ENV))?;
+        .map_err(|e| anyhow::anyhow!("Tier B (Presidio) request failed: {e}. Set {} to point at a running presidio-analyzer, or drop --tier-b.", redact_paperasse_core::detect::tier_b::ANALYZER_URL_ENV))?;
 
     entities.extend(tier_b_entities.into_iter().filter(|e| {
         let entity_ok = cli

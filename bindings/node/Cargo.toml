@@ -1,6 +1,6 @@
 [package]
-name = "paperasse-privacy-node"
-description = "Node.js bindings for paperasse-privacy"
+name = "redact-paperasse-node"
+description = "Node.js bindings for redact-paperasse"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -14,7 +14,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-paperasse-privacy-core = { workspace = true }
+redact-paperasse-core = { workspace = true }
 napi = { version = "2", default-features = false, features = ["napi4", "async"] }
 napi-derive = "2"
 tokio = { workspace = true, features = ["rt-multi-thread"] }

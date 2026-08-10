@@ -78,7 +78,7 @@ pub struct Span {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DetectionSource {
-    /// In-process regex+checksum recognizer (`paperasse-privacy-recognizers`).
+    /// In-process regex+checksum recognizer (`redact-paperasse-recognizers`).
     TierA,
     /// Presidio REST call (NER, context-dependent entities).
     TierB,

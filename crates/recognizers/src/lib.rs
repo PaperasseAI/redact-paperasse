@@ -4,7 +4,7 @@
 //!
 //! For entity types that need general-purpose NER (names, locations, anything
 //! context-dependent rather than a fixed identifier format), see Tier B in
-//! `paperasse-privacy-core::detect::tier_b`, which calls out to Presidio.
+//! `redact-paperasse-core::detect::tier_b`, which calls out to Presidio.
 
 mod credit_card;
 mod email;

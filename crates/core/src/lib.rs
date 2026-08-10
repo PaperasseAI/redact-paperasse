@@ -1,4 +1,4 @@
-//! `paperasse-privacy-core`: image/PDF/text in, redacted image/PDF/text/markdown
+//! `redact-paperasse-core`: image/PDF/text in, redacted image/PDF/text/markdown
 //! out. A privacy engine built for agents — fast enough to run in-process
 //! (via the Node/Python/WASM bindings in this workspace) rather than only as
 //! a REST call.

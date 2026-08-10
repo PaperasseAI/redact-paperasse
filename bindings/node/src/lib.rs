@@ -2,7 +2,7 @@
 
 use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
-use paperasse_privacy_core::{Engine, Input, OutputFormat};
+use redact_paperasse_core::{Engine, Input, OutputFormat};
 
 /// Options for `redactText`. All fields optional.
 #[napi(object)]
@@ -109,7 +109,7 @@ pub async fn redact_image(
 /// via OCR + Tier A, black out matches, and reassemble a new PDF from the
 /// redacted page images (`printpdf`). Deliberately flattens to an
 /// image-based PDF — see `redact_pdf_bytes`'s doc comment in
-/// `paperasse-privacy-core` for why that's the correct behavior for
+/// `redact-paperasse-core` for why that's the correct behavior for
 /// genuine redaction, not a limitation. Verified against a real document
 /// embedded in a PDF — see the repo README's "Build status" section.
 ///

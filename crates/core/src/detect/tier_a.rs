@@ -1,4 +1,4 @@
-use paperasse_privacy_recognizers::{default_registry, Recognizer};
+use redact_paperasse_recognizers::{default_registry, Recognizer};
 
 use crate::types::{BoundingBox, DetectionSource, Entity, ExtractedDocument, Span};
 
@@ -56,7 +56,7 @@ fn union_bbox(
 }
 
 /// The default, in-process detection pass: regex+checksum recognizers only
-/// (see `paperasse-privacy-recognizers`), zero network dependency. This is
+/// (see `redact-paperasse-recognizers`), zero network dependency. This is
 /// the whole reason to ship as a native binding instead of only a REST API —
 /// most PII an agent needs to worry about (identifiers with a fixed format:
 /// SSNs, NIRs, IBANs, emails) doesn't need general NER to catch reliably,

@@ -1,24 +1,24 @@
 [package]
-name = "paperasse-privacy-cli"
-description = "CLI for paperasse-privacy: redact PII from images, PDFs, and text"
+name = "redact-paperasse-cli"
+description = "CLI for redact-paperasse: redact PII from images, PDFs, and text"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 version.workspace = true
 
 [[bin]]
-name = "ppr"
+name = "redactpapr"
 path = "src/main.rs"
 
 [features]
 default = []
 # Off by default so `cargo build`/`cargo install` for the plain CLI never
-# pulls in reqwest — matches paperasse-privacy-core's own tier-b feature
+# pulls in reqwest — matches redact-paperasse-core's own tier-b feature
 # being opt-in. Build with `--features tier-b` for the `--tier-b` flag.
-tier-b = ["paperasse-privacy-core/tier-b"]
+tier-b = ["redact-paperasse-core/tier-b"]
 
 [dependencies]
-paperasse-privacy-core = { workspace = true }
+redact-paperasse-core = { workspace = true }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde_json = { workspace = true }

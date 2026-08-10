@@ -1,5 +1,5 @@
 [package]
-name = "paperasse-privacy-recognizers"
+name = "redact-paperasse-recognizers"
 description = "Fast, deterministic regex+checksum PII recognizers (Tier A) — no ML, no network"
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ repository.workspace = true
 version.workspace = true
 
 [lib]
-name = "paperasse_privacy_recognizers"
+name = "redact_paperasse_recognizers"
 
 [dependencies]
 regex = { workspace = true }

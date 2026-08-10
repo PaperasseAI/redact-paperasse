@@ -1,4 +1,4 @@
-# paperasse-privacy
+# redact-paperasse
 
 A privacy engine for agents: image, PDF, office document, or text in → redacted image, PDF, or text out. For the text path, markdown is the default output shape (agents parse it best) — pass `markdown: false` to get plain text back instead. Built to run *inside* the host process via native language bindings, not only as a REST call — fast enough that an agent can call it on the hot path.
 
@@ -40,7 +40,7 @@ Neither library is forked or modified — both are consumed as ordinary crates.i
 
 ### Why two detection tiers, not one
 
-Regex+checksum recognizers (SSNs, the French NIR, IBANs, emails — a fixed identifier format with a real validation algorithm) are cheap, deterministic, and portable to any language with zero ML dependency. General NER (names, locations, anything context-dependent) needs a real NLP stack and is meaningfully less certain — in testing against a real document while building the `FR_NIR` recognizer for Presidio (on the `paperasse-fr-nir` branch of `data-privacy-stack/presidio`), the checksum-validated match was the reliable signal; the NER layer's guesses (misclassifying an account number as a date, a dossier number as a UK health-service number) were the wrong ones.
+Regex+checksum recognizers (SSNs, the French NIR, IBANs, emails — a fixed identifier format with a real validation algorithm) are cheap, deterministic, and portable to any language with zero ML dependency. General NER (names, locations, anything context-dependent) needs a real NLP stack and is meaningfully less certain — in testing against a real document while building the `FR_NIR` recognizer for Presidio (on the [`paperasse-fr-nir` branch](https://github.com/PaperasseAI/presidio/tree/paperasse-fr-nir) of `data-privacy-stack/presidio`), the checksum-validated match was the reliable signal; the NER layer's guesses (misclassifying an account number as a date, a dossier number as a UK health-service number) were the wrong ones.
 
 So Tier A — the regex+checksum layer — is the default, in-process, zero-network path (`crates/recognizers`), meant to run inside the same process as the caller via the native bindings. Tier B is an explicit opt-in REST call to a Presidio deployment, for when Tier A's coverage genuinely isn't enough and the latency/network hop is worth it. Both tiers accept the same two filters (`entities`, `score_threshold`), matching Presidio's own `analyzer_entities`/`score_threshold` request fields — see `Engine::process`.
 
@@ -50,13 +50,13 @@ Tier B is fail-closed by design, not fail-open: if the Presidio deployment is un
 
 ```
 crates/
-  core/         paperasse-privacy-core — the pipeline (ingest/detect/redact)
-  recognizers/  paperasse-privacy-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS,
+  core/         redact-paperasse-core — the pipeline (ingest/detect/redact)
+  recognizers/  redact-paperasse-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS,
                 US_SSN, IBAN_CODE, CREDIT_CARD, PHONE_NUMBER
-  cli/          `ppr` binary (--features tier-b for the Presidio flag)
+  cli/          `redactpapr` binary (--features tier-b for the Presidio flag)
 bindings/
-  node/         napi-rs (@paperasse/privacy on npm) — see example.mjs
-  python/       PyO3 + maturin (paperasse-privacy on PyPI)
+  node/         napi-rs (redact-paperasse on npm) — see example.mjs
+  python/       PyO3 + maturin (redact-paperasse on PyPI)
   wasm/         wasm-bindgen, browser-only — Tier A text redaction only,
                 see "Build status" for why pixel redaction can't exist here
 ```
@@ -77,8 +77,8 @@ Six are registered today, each honest about how strong its own validation actual
 Clean, zero warnings, on everything CI checks (`.github/workflows/ci.yml`):
 
 - `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **56/56 tests pass.**
-- `cargo clippy -p paperasse-privacy-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
-- `cargo check -p paperasse-privacy-cli --features tier-b` — the Presidio-calling code path, which is off by default.
+- `cargo clippy -p redact-paperasse-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
+- `cargo check -p redact-paperasse-cli --features tier-b` — the Presidio-calling code path, which is off by default.
 - The Node binding is built for real (`napi build --platform`) and exercised with `example.mjs` against the actual compiled addon, not just type-checked.
 
 This is real, not aspirational — getting here caught and fixed several genuine bugs, not just typos:
@@ -94,7 +94,7 @@ This is real, not aspirational — getting here caught and fixed several genuine
 
 ### Verified against a real document, not just a compiler
 
-`ppr` run end to end (`ingest → Tier A → redact`, `OutputFormat::Native`) against a real photographed French URSSAF letter — the exact same document used earlier to validate the `FR_NIR` Presidio recognizer this whole project grew out of — both as a **plain image** and as that same image **embedded in a PDF** (to exercise the PDF-specific render → redact → reassemble path separately). Both times: the NIR field was correctly detected (`FR_NIR`, score 1.0, real `bbox` coordinates) and the redaction box landed pixel-precise on it — nothing else on the page (name, address, other reference numbers, signature) was touched, page dimensions and layout fully intact in the reassembled PDF.
+`redactpapr` run end to end (`ingest → Tier A → redact`, `OutputFormat::Native`) against a real photographed French URSSAF letter — the exact same document used earlier to validate the `FR_NIR` Presidio recognizer this whole project grew out of — both as a **plain image** and as that same image **embedded in a PDF** (to exercise the PDF-specific render → redact → reassemble path separately). Both times: the NIR field was correctly detected (`FR_NIR`, score 1.0, real `bbox` coordinates) and the redaction box landed pixel-precise on it — nothing else on the page (name, address, other reference numbers, signature) was touched, page dimensions and layout fully intact in the reassembled PDF.
 
 This resolved every item the README used to list as unverified:
 
