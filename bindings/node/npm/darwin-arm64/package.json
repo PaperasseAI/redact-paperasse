@@ -1,6 +1,6 @@
 {
   "name": "redact-paperasse-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "os": [
     "darwin"
   ],
@@ -9,7 +9,8 @@
   ],
   "main": "index.darwin-arm64.node",
   "files": [
-    "index.darwin-arm64.node"
+    "index.darwin-arm64.node",
+    "libpdfium.dylib"
   ],
   "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
   "license": "MIT",

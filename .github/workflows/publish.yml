@@ -6,43 +6,57 @@ name: Publish
 # the already-committed Cargo.toml/package.json/pyproject.toml, this
 # workflow doesn't bump versions itself).
 #
-# Requires three repo secrets, all configured as of the v0.1.0 attempt below:
-#   CARGO_REGISTRY_TOKEN — crates.io API token. Not needed urgently: the
-#     three publishable crates (recognizers/core/cli) are already live on
-#     crates.io v0.1.0, published manually in the same dependency order
-#     this job uses — expect this job to fail on any tag re-pushing that
-#     same version (crates.io rejects re-publishing an existing version),
-#     harmlessly, since it doesn't gate npm-publish/pypi-publish.
-#   NPM_TOKEN / PYPI_API_TOKEN — configured.
+# Requires three repo secrets — CARGO_REGISTRY_TOKEN, NPM_TOKEN,
+# PYPI_API_TOKEN — all configured.
 #
-# Real v0.1.0 tag run (2026-08-10) found and fixed three genuine bugs this
-# had never been exercised against before:
-#   1. linux-arm64-gnu's zig cross-compile couldn't find OpenSSL headers
-#      for the target arch (openssl-sys, pulled in transitively) — fixed by
-#      switching to a native ubuntu-24.04-arm runner instead of
-#      cross-compiling from x64.
-#   2. macOS's runner defaults to Python 3.14, newer than PyO3 0.23's
-#      known-version list (caps at 3.13) — fixed with the abi3-py39
-#      feature (bindings/python/Cargo.toml) + PYO3_USE_ABI3_FORWARD_COMPATIBILITY.
-#   3. The Linux PyPI wheel's before-script-linux ran apt-get as a non-root
-#      user and hit a lock-file permission error — fixed by adding sudo.
-# Also found, not a bug: macos-13 (Intel) sat queued for over an hour with
-# zero GitHub-side runner availability, which would have hung the whole
-# release indefinitely under the original all-or-nothing `needs:` gating —
-# npm-publish/pypi-publish now run with `if: ${{ !cancelled() }}` and skip
-# any platform that didn't produce a binary, so one stuck/slow runner
-# degrades to "that platform ships next release" instead of blocking
-# everything. Each matrix leg also now has a 45m timeout so a stuck runner
-# fails (and gets skipped) instead of hanging.
+# Release history:
 #
-# What actually built successfully in that same run: darwin-arm64 and
-# x86_64-unknown-linux-gnu native addons, the win32-x64-msvc native addon,
-# and the win32-x64-msvc Python wheel. What's still unverified after these
-# fixes: the native ubuntu-24.04-arm build, the abi3 fix, the sudo fix, and
-# npm-publish/pypi-publish's actual publish steps (napi artifacts'
-# multi-job artifact placement, the per-platform subpackage publish loop)
-# — none of those have run for real yet, only reasoned through from the
-# failure logs above.
+# v0.1.0 (2026-08-10, tag push): found and fixed three genuine CI bugs
+# this had never been exercised against before -- linux-arm64-gnu's zig
+# cross-compile couldn't find OpenSSL headers for the target arch (fixed by
+# switching to a native ubuntu-24.04-arm runner instead of cross-compiling);
+# macOS's runner defaults to Python 3.14, newer than PyO3 0.23's known-
+# version list (fixed with the abi3-py39 feature +
+# PYO3_USE_ABI3_FORWARD_COMPATIBILITY); the Linux PyPI wheel's
+# before-script-linux ran apt-get as non-root and hit a lock-file
+# permission error (fixed with sudo). Also found, not a bug: macos-13
+# (Intel) sat queued for over an hour with zero GitHub-side runner
+# availability -- npm-publish/pypi-publish now run with
+# `if: ${{ !cancelled() }}` and skip any platform that didn't produce a
+# binary, so a stuck runner degrades to "ships next release" instead of
+# blocking everything; each matrix leg also has a 45m timeout for the same
+# reason.
+#
+# v0.1.0 (2026-08-10, workflow_dispatch re-run with those three fixes):
+# confirmed all three fixes work -- PyPI published all 3 wheels for real
+# (verified independently by installing from PyPI into a fresh venv), and
+# 4 of 5 npm platforms built (darwin-arm64, linux-x64-gnu, linux-arm64-gnu,
+# win32-x64-msvc); darwin-x64 (macos-13) got stuck queued again, same
+# runner-pool issue, not a workflow bug. npm-publish's own actual publish
+# steps still hadn't run yet at this point (npm-build hadn't reached
+# "completed" for the whole matrix).
+#
+# v0.1.1 (not yet released): fixes a real, more serious bug that surfaced
+# from that PyPI verification -- installing v0.1.0 from PyPI into a fresh
+# venv and calling redact_image/redact_pdf panicked with "could not find
+# pdfium shared library". liteparse-pdfium loads PDFium at runtime via
+# dlopen, invisible to maturin's/napi's automatic shared-library bundling
+# (which only sees link-time deps), so the compiled extension shipped
+# without its runtime dependency on every machine except the one that built
+# it. Fixed in both pypi-build (scripts/bundle_pdfium_into_wheel.py) and
+# npm-build/npm-publish (a locate-and-place step) by bundling the pdfium
+# library next to the compiled extension, which the crate's own search
+# order already checks for (self_dir() via dladdr/GetModuleHandleExW) --
+# no runtime code changes needed, just packaging. Verified for real on this
+# machine for both bindings by hiding the local pdfium cache dir to
+# simulate a foreign machine: both redact_image (Python, via a locally
+# patched wheel in a fresh venv) and redactImage (Node, via an isolated
+# directory with just the .node file) failed without the bundled library
+# and succeeded with it. NOT yet verified: the CI steps that do this
+# bundling automatically (the logic is the same as what was hand-verified,
+# but the actual `find target -path "*/release/deps/*"` lookup inside a
+# real CI checkout, and the Linux wheel case specifically where the build
+# runs inside a maturin-action manylinux container, haven't run for real).
 on:
   push:
     tags:
@@ -122,15 +136,48 @@ jobs:
         working-directory: bindings/node
       - run: npx napi build --platform --release --target ${{ matrix.target }}
         working-directory: bindings/node
-      # `napi artifacts` (run in npm-publish) crawls this directory
-      # recursively for files named `<binaryName>.<platformArchABI>.node` --
-      # it doesn't care about the folder structure the artifacts land in,
-      # only the filename `napi build` already produces, so a flat upload
-      # here is enough.
+      # liteparse-pdfium loads PDFium at runtime via dlopen, not at link
+      # time, so it's invisible to napi's/maturin's automatic shared-library
+      # bundling. Found by actually installing the published v0.1.0 wheel
+      # from PyPI into a fresh venv and running it -- redactImage/redactPdf
+      # panicked with "could not find pdfium shared library" on every
+      # machine except the one that built it, since the crate's own
+      # search_paths() baked-in fallback points at the CI runner's ephemeral
+      # cache dir. Its search order also checks "next to the native
+      # extension module" (self_dir() via dladdr/GetModuleHandleExW,
+      # explicitly documented to cover .node files, not just Python's
+      # .so/.pyd) -- copying the library there is the whole fix, verified
+      # locally by hiding this machine's pdfium cache dir to simulate a
+      # foreign machine and confirming redactImage fails without the
+      # bundled copy and succeeds with it.
+      - name: Locate the pdfium shared library this build produced
+        id: pdfium
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            *-apple-darwin) name="libpdfium.dylib" ;;
+            *-linux-gnu) name="libpdfium.so" ;;
+            *-windows-msvc) name="pdfium.dll" ;;
+          esac
+          path=$(find target -name "$name" -path "*/release/deps/*" | head -1)
+          if [ -z "$path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/"
+            exit 1
+          fi
+          cp "$path" "bindings/node/$name"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+      # `napi artifacts` (run in npm-publish) only picks up files named
+      # `<binaryName>.<platformArchABI>.node` from this artifact; the
+      # pdfium library alongside it is placed into the right npm/<platform>/
+      # directory by a separate step there, matched by this artifact's name
+      # rather than by filename (every darwin target's pdfium file is
+      # literally named the same thing, so filename alone can't route it).
       - uses: actions/upload-artifact@v4
         with:
           name: napi-${{ matrix.target }}
-          path: bindings/node/*.node
+          path: |
+            bindings/node/*.node
+            bindings/node/${{ steps.pdfium.outputs.name }}
 
   npm-publish:
     name: Publish npm package
@@ -162,6 +209,42 @@ jobs:
       # untested end to end since no tag has triggered this yet.
       - run: npx napi artifacts
         working-directory: bindings/node
+      # napi artifacts (above) only knows about *.node files -- place each
+      # downloaded pdfium library into its matching npm/<platformArchABI>/
+      # directory too (see npm-build's comment for why this needs to exist
+      # at all). Routed by the artifact directory name (a Rust target
+      # triple, e.g. "napi-aarch64-apple-darwin") rather than the pdfium
+      # filename, since every darwin target's file is literally named the
+      # same thing.
+      - name: Place each pdfium library next to its platform's .node file
+        working-directory: bindings/node
+        run: |
+          declare -A triple_to_platform=(
+            [x86_64-apple-darwin]=darwin-x64
+            [aarch64-apple-darwin]=darwin-arm64
+            [x86_64-unknown-linux-gnu]=linux-x64-gnu
+            [aarch64-unknown-linux-gnu]=linux-arm64-gnu
+            [x86_64-pc-windows-msvc]=win32-x64-msvc
+          )
+          for artifact_dir in artifacts/napi-*/; do
+            triple=$(basename "$artifact_dir" | sed 's/^napi-//')
+            platform="${triple_to_platform[$triple]}"
+            if [ -z "$platform" ]; then
+              echo "::error::unknown target triple in artifact dir: $triple"
+              exit 1
+            fi
+            pdfium_file=$(find "$artifact_dir" -iname "libpdfium.*" -o -iname "pdfium.dll" | head -1)
+            if [ -z "$pdfium_file" ]; then
+              echo "no pdfium library found for $triple (its npm-build leg likely didn't produce one) -- skipping"
+              continue
+            fi
+            if [ ! -d "npm/$platform" ]; then
+              echo "::error::npm/$platform does not exist -- triple_to_platform mapping is out of sync with npm/*/"
+              exit 1
+            fi
+            cp "$pdfium_file" "npm/$platform/"
+            echo "placed $(basename "$pdfium_file") into npm/$platform/"
+          done
       # Each platform subpackage publishes independently (order doesn't
       # matter between them, unlike crates.io's dependency chain), then the
       # root package last, since its optionalDependencies reference them by
@@ -232,6 +315,36 @@ jobs:
           # over a genuine incompatibility: abi3 targets a stable C API
           # subset that doesn't change across newer CPython versions.
           PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+      # liteparse-pdfium loads PDFium at runtime via dlopen, not at link
+      # time, so it's invisible to maturin's automatic shared-library
+      # bundling (which only sees link-time deps via otool/ldd). Found by
+      # actually installing the published v0.1.0 wheel from PyPI into a
+      # fresh venv and running it: redactImage/redactPdf panicked with
+      # "could not find pdfium shared library" everywhere except the
+      # machine that built it. The crate's own search order includes "next
+      # to the native extension module" (dladdr-based), which
+      # scripts/bundle_pdfium_into_wheel.py exploits by copying the library
+      # in next to the compiled .so inside the wheel and updating RECORD's
+      # hash/size entry to match -- verified for real: patched a locally
+      # built wheel this exact way, installed it in a fresh venv, and
+      # confirmed redact_image/redact_pdf work.
+      - name: Bundle libpdfium into the wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            *-apple-darwin) name="libpdfium.dylib" ;;
+            *-linux-gnu) name="libpdfium.so" ;;
+            *-windows-msvc) name="pdfium.dll" ;;
+          esac
+          pdfium_path=$(find target -name "$name" -path "*/release/deps/*" | head -1)
+          if [ -z "$pdfium_path" ]; then
+            echo "::error::could not find $name under target/**/release/deps/"
+            exit 1
+          fi
+          wheel_path=$(find bindings/python/dist -name "*.whl")
+          command -v python3 >/dev/null 2>&1 && PY=python3 || PY=python
+          "$PY" scripts/bundle_pdfium_into_wheel.py "$wheel_path" "$pdfium_path" redact_paperasse
       - uses: actions/upload-artifact@v4
         with:
           name: wheels-${{ matrix.target }}

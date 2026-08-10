@@ -1,6 +1,6 @@
 {
   "name": "redact-paperasse-linux-arm64-gnu",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "os": [
     "linux"
   ],
@@ -9,7 +9,8 @@
   ],
   "main": "index.linux-arm64-gnu.node",
   "files": [
-    "index.linux-arm64-gnu.node"
+    "index.linux-arm64-gnu.node",
+    "libpdfium.so"
   ],
   "description": "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out",
   "license": "MIT",
