@@ -139,7 +139,11 @@ fn draw_redaction_boxes(
 /// rather than the source image's own resolution, which is very likely
 /// wrong for a camera photo. Flagged here rather than silently mispositioning
 /// redaction boxes.
-pub fn redact_image_bytes(bytes: &[u8], entities: &[Entity]) -> Result<Vec<u8>, EngineError> {
+pub fn redact_image_bytes(
+    bytes: &[u8],
+    entities: &[Entity],
+    ingest_dpi: f32,
+) -> Result<Vec<u8>, EngineError> {
     let format = image::guess_format(bytes)
         .map_err(|e| EngineError::Redact(format!("unrecognized image format: {e}")))?;
     let decoded = ImageReader::with_format(Cursor::new(bytes), format)
@@ -147,8 +151,12 @@ pub fn redact_image_bytes(bytes: &[u8], entities: &[Entity]) -> Result<Vec<u8>, 
         .map_err(|e| EngineError::Redact(format!("failed to decode image: {e}")))?;
 
     let mut rgba = decoded.to_rgba8();
-    let assumed_dpi = 150.0_f32; // TODO(build-validation): confirm against real ingest DPI.
-    draw_redaction_boxes(&mut rgba, entities, None, assumed_dpi / 72.0);
+    // Must be the SAME dpi the ingest pass rasterized at: boxes come back in
+    // 72-DPI viewport units and are scaled into this image's pixel space by
+    // dpi/72. This used to be hardcoded to 150 while the engine's ingest DPI
+    // was configurable, so raising the DPI to read finer print would have
+    // silently misplaced every box. It's threaded through now.
+    draw_redaction_boxes(&mut rgba, entities, None, ingest_dpi / 72.0);
 
     // Boxes are drawn on an RGBA buffer, but not every format can encode an
     // alpha channel — JPEG has none at all, and `image`'s encoder rejects
@@ -365,7 +373,7 @@ mod tests {
         // passed — and photographed paperwork, the whole point of this
         // tool, is overwhelmingly JPEG.
         let jpeg = encode_blank(ImageFormat::Jpeg);
-        let out = redact_image_bytes(&jpeg, &[entity_with_box()])
+        let out = redact_image_bytes(&jpeg, &[entity_with_box()], 150.0)
             .expect("redacting a JPEG must not fail on the alpha channel");
 
         assert_eq!(
@@ -383,7 +391,8 @@ mod tests {
         // The case that always worked — kept so a future fix for one format
         // can't silently break the other.
         let png = encode_blank(ImageFormat::Png);
-        let out = redact_image_bytes(&png, &[entity_with_box()]).expect("redacting a PNG works");
+        let out =
+            redact_image_bytes(&png, &[entity_with_box()], 150.0).expect("redacting a PNG works");
         assert_eq!(
             image::guess_format(&out).expect("output should be a real image"),
             ImageFormat::Png,

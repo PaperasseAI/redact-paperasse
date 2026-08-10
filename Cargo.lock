@@ -3087,6 +3087,7 @@ version = "0.1.2"
 dependencies = [
  "anyhow",
  "clap",
+ "liteparse",
  "redact-paperasse-core",
  "serde_json",
  "tokio",

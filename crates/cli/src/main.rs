@@ -3,6 +3,17 @@ use std::path::PathBuf;
 use clap::{Parser, ValueEnum};
 use redact_paperasse_core::{DocumentFormat, Engine, Input, OutputFormat};
 
+/// One engine, with the OCR rasterization DPI applied. Keeping this in a
+/// helper means the ingest DPI and the DPI the redaction boxes are scaled
+/// by can never drift apart.
+fn make_engine(dpi: f32) -> Engine {
+    let config = liteparse::config::LiteParseConfig {
+        dpi,
+        ..Default::default()
+    };
+    Engine::with_liteparse_config(config)
+}
+
 #[derive(Parser)]
 #[command(
     name = "redactpapr",
@@ -41,6 +52,13 @@ struct Cli {
     /// `score_threshold`. Defaults to no filtering.
     #[arg(long)]
     score_threshold: Option<f32>,
+
+    /// DPI the page is rasterized at before OCR. Higher reads finer print
+    /// (small print in a dense scan can be missed at the default) at the
+    /// cost of slower OCR and more memory. Redaction boxes are scaled by
+    /// this same value, so it stays consistent automatically.
+    #[arg(long, default_value = "150")]
+    dpi: f32,
 
     /// Also run Tier B (a Presidio /analyze REST call) for NER coverage
     /// Tier A's recognizers can't provide — names, locations, anything
@@ -142,12 +160,12 @@ async fn main() -> anyhow::Result<()> {
     let result = if cli.tier_b {
         run_with_tier_b(&cli, input, format).await?
     } else {
-        Engine::default()
+        make_engine(cli.dpi)
             .process(input, format, cli.entities.as_deref(), cli.score_threshold)
             .await?
     };
     #[cfg(not(feature = "tier-b"))]
-    let result = Engine::default()
+    let result = make_engine(cli.dpi)
         .process(input, format, cli.entities.as_deref(), cli.score_threshold)
         .await?;
 

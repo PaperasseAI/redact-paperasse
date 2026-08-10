@@ -19,6 +19,7 @@ tier-b = ["redact-paperasse-core/tier-b"]
 
 [dependencies]
 redact-paperasse-core = { workspace = true }
+liteparse = { workspace = true, features = ["tesseract"] }
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 serde_json = { workspace = true }

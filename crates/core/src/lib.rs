@@ -145,7 +145,8 @@ impl Engine {
                 Ok(redact::redact_text(&doc, &entities, format))
             }
             Input::Image(bytes) => {
-                let redacted_bytes = redact::redact_image_bytes(&bytes, &entities)?;
+                let redacted_bytes =
+                    redact::redact_image_bytes(&bytes, &entities, self.liteparse_config.dpi)?;
                 Ok(RedactionResult {
                     format,
                     bytes: Some(redacted_bytes),
