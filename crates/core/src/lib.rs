@@ -199,8 +199,22 @@ impl Engine {
         // we redact and return, which also hands back an upright file.
         if found.is_empty() && self.ocr_tiling > 0 {
             if let Input::Image(ref bytes) = input {
-                for degrees in [90u32, 180, 270] {
-                    let Some(rotated) = ingest::rotate_bytes(bytes, degrees) else {
+                // Right angles first — a sideways scan is far more common
+                // than a skewed one, and these are the cheap cases. Then a
+                // small skew sweep, because a page photographed on a desk
+                // lands at some incidental angle: a real URSSAF letter at
+                // ~12 degrees read as completely blank, and the same file at
+                // 10 or 15 gave up its social security number at once.
+                // Coarse steps on purpose; OCR tolerates a few degrees, so
+                // landing near the angle is enough.
+                let ladder = [90.0f32, 180.0, 270.0, 10.0, -10.0, 15.0, -15.0, 20.0, -20.0];
+                for degrees in ladder {
+                    let rotated = if degrees == 90.0 || degrees == 180.0 || degrees == 270.0 {
+                        ingest::rotate_bytes(bytes, degrees as u32)
+                    } else {
+                        ingest::rotate_bytes_fine(bytes, degrees)
+                    };
+                    let Some(rotated) = rotated else {
                         continue;
                     };
                     let candidate = Input::Image(rotated.clone());

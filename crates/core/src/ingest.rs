@@ -12,6 +12,58 @@ use crate::types::{BoundingBox, DocumentFormat, ExtractedDocument, Input, Span, 
 /// moment anyone changed it.
 pub(crate) const IMAGE_OCR_DPI: f32 = 150.0;
 
+/// Re-encode `bytes` rotated by an arbitrary `degrees`, padding with white.
+///
+/// This is for *skew*, not orientation: a page photographed on a desk sits at
+/// some incidental angle, and Tesseract copes with a couple of degrees but not
+/// with ten. A real URSSAF letter photographed at roughly 12 degrees produced
+/// zero detections, while the identical file rotated by 10 or 15 produced the
+/// social security number immediately — the pixels were always there, the OCR
+/// pass just could not follow the lines.
+///
+/// White padding, not black or transparent: the corners exposed by rotating
+/// become page-coloured rather than a hard edge Tesseract may read as a rule
+/// or a character stroke.
+pub(crate) fn rotate_bytes_fine(bytes: &[u8], degrees: f32) -> Option<Vec<u8>> {
+    use std::io::Cursor;
+
+    let img = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?
+        .to_rgb8();
+    let (w, h) = (img.width() as f32, img.height() as f32);
+    let (sin, cos) = degrees.to_radians().sin_cos();
+
+    // Grow the canvas so no content is clipped off the corners.
+    let out_w = (w * cos.abs() + h * sin.abs()).ceil().max(1.0);
+    let out_h = (w * sin.abs() + h * cos.abs()).ceil().max(1.0);
+    let mut out =
+        image::RgbImage::from_pixel(out_w as u32, out_h as u32, image::Rgb([255, 255, 255]));
+
+    // Inverse-map each destination pixel back into the source, so every
+    // output pixel is written exactly once and no seams appear.
+    let (cx, cy) = (w / 2.0, h / 2.0);
+    let (ocx, ocy) = (out_w / 2.0, out_h / 2.0);
+    for (dx, dy, px) in out.enumerate_pixels_mut() {
+        let (rx, ry) = (dx as f32 - ocx, dy as f32 - ocy);
+        let sx = rx * cos + ry * sin + cx;
+        let sy = -rx * sin + ry * cos + cy;
+        if sx >= 0.0 && sy >= 0.0 && sx < w && sy < h {
+            *px = *img.get_pixel(sx as u32, sy as u32);
+        }
+        // else: leave it white — the corners a rotation exposes should read
+        // as page, not as a hard edge Tesseract might take for a rule.
+    }
+
+    let mut buf = Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgb8(out)
+        .write_to(&mut buf, image::ImageFormat::Png)
+        .ok()?;
+    Some(buf.into_inner())
+}
+
 /// Re-encode `bytes` rotated clockwise by `degrees` (90/180/270).
 ///
 /// Used to retry OCR on a sideways page. An EXIF tag only helps when the
@@ -480,6 +532,32 @@ mod orientation_tests {
         let back = rotate_bytes(&rotated, 270).expect("rotates back");
         let decoded = image::load_from_memory(&back).expect("decodes");
         assert_eq!((decoded.width(), decoded.height()), (40, 10));
+    }
+
+    #[test]
+    fn a_fine_rotation_grows_the_canvas_and_pads_with_page_white() {
+        // A skewed page must not be clipped at the corners, and the exposed
+        // corners must read as page rather than as a hard edge Tesseract
+        // could mistake for a rule.
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(100, 50, image::Rgb([0, 0, 0])))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encodes");
+
+        let out = rotate_bytes_fine(&png.into_inner(), 15.0).expect("rotates");
+        let img = image::load_from_memory(&out).expect("decodes").to_rgb8();
+
+        assert!(
+            img.width() > 100 && img.height() > 50,
+            "canvas must grow so nothing is clipped, got {}x{}",
+            img.width(),
+            img.height()
+        );
+        assert_eq!(
+            *img.get_pixel(0, 0),
+            image::Rgb([255, 255, 255]),
+            "the corner a rotation exposes must be page-white"
+        );
     }
 
     #[test]
