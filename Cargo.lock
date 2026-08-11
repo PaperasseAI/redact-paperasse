@@ -3227,7 +3227,7 @@ checksum = "03251193000f4bd3b042892be858ee50e8b3719f2b08e5833ac4353724632430"
 
 [[package]]
 name = "redact-paperasse-cli"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "clap",
@@ -3239,7 +3239,7 @@ dependencies = [
 
 [[package]]
 name = "redact-paperasse-core"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anydoc",
  "async-trait",
@@ -3257,7 +3257,7 @@ dependencies = [
 
 [[package]]
 name = "redact-paperasse-node"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "napi",
  "napi-build",
@@ -3268,7 +3268,7 @@ dependencies = [
 
 [[package]]
 name = "redact-paperasse-python"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "pyo3",
  "pyo3-async-runtimes",
@@ -3278,14 +3278,14 @@ dependencies = [
 
 [[package]]
 name = "redact-paperasse-recognizers"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "regex",
 ]
 
 [[package]]
 name = "redact-paperasse-wasm"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "console_error_panic_hook",
  "redact-paperasse-core",
