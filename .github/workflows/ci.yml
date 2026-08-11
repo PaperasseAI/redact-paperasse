@@ -29,8 +29,16 @@ jobs:
       # status" section for how that was discovered.
       - name: Install native build dependencies (Tesseract/Leptonica via CMake)
         run: sudo apt-get update && sudo apt-get install -y cmake pkg-config
+      # This must be the FIRST cargo command that touches the lockfile.
+      # Any *unlocked* cargo invocation silently rewrites Cargo.lock on
+      # disk, so a --locked check placed after one is checking a file the
+      # earlier step already repaired -- it can never fail. That is exactly
+      # how a stale lock reached the v0.1.6 tag and broke `cargo publish`,
+      # which does run --locked first and had nothing to repair it.
+      - name: Check Cargo.lock is up to date
+        run: cargo metadata --locked --format-version 1 > /dev/null
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      - run: cargo clippy --workspace --all-features --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
       - name: Check the tier-b feature builds standalone
         run: cargo check -p redact-paperasse-cli --features tier-b --locked
