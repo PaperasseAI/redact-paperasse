@@ -14,7 +14,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-redact-paperasse-core = { workspace = true }
+redact-paperasse-core = { workspace = true, features = ["tier-b"] }
 napi = { version = "2", default-features = false, features = ["napi4", "async"] }
 napi-derive = "2"
 tokio = { workspace = true, features = ["rt-multi-thread"] }

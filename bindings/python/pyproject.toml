@@ -4,7 +4,7 @@ build-backend = "maturin"
 
 [project]
 name = "redact-paperasse"
-version = "0.1.14"
+version = "0.1.15"
 description = "Fast PII redaction for agents — image/PDF/text in, redacted image/PDF/text/markdown out"
 requires-python = ">=3.9"
 license = { text = "MIT" }

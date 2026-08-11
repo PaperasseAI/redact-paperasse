@@ -4,6 +4,32 @@ use napi::bindgen_prelude::Buffer;
 use napi_derive::napi;
 use redact_paperasse_core::{Engine, Input, OutputFormat};
 
+/// Presidio NER pass configuration — the opt-in "Tier B". When present,
+/// detection runs the local recognizers *and* a Presidio `/analyze` call,
+/// with Presidio's spans routed through the same OCR word boxes the local
+/// recognizers use, so a PERSON found on a photographed letter gets a real
+/// black box on the image.
+///
+/// Two behaviours worth knowing before turning it on:
+///
+/// * **Fail-closed, twice.** If the analyzer is unreachable, redaction
+///   errors rather than quietly returning a result missing every name it
+///   was asked to catch. And if a Presidio span can't be matched to any
+///   OCR word box on a pixel output, the whole run errors naming the
+///   entity types that would have been silently visible.
+/// * **Your text goes to that URL.** Point this at an analyzer *you* run
+///   (localhost or your own network). Nothing in this library ever picks a
+///   remote endpoint on its own.
+#[napi(object)]
+pub struct TierBOptions {
+    /// Base URL of a running presidio-analyzer, e.g. `http://localhost:5002`.
+    pub analyzer_url: String,
+    /// Language code Presidio should analyze with (e.g. `"fr"`, `"en"`).
+    /// Defaults to `"en"` — the stock analyzer image only loads English;
+    /// French needs an analyzer configured with a French NLP model.
+    pub language: Option<String>,
+}
+
 /// Options for `redactText`. All fields optional.
 #[napi(object)]
 pub struct RedactTextOptions {
@@ -18,6 +44,9 @@ pub struct RedactTextOptions {
     /// Drop matches scoring below this (0.0-1.0). Matches Presidio's
     /// `score_threshold`. Omit/undefined for no filtering.
     pub score_threshold: Option<f64>,
+    /// Run a Presidio NER pass alongside the local recognizers — see
+    /// `TierBOptions` for the two fail-closed behaviours this brings.
+    pub tier_b: Option<TierBOptions>,
 }
 
 /// Options for `redactImage`/`redactPdf`/`redactImageText`/`redactPdfText`.
@@ -37,6 +66,43 @@ pub struct RedactBytesOptions {
     /// Drop matches scoring below this (0.0-1.0). Matches Presidio's
     /// `score_threshold`. Omit/undefined for no filtering.
     pub score_threshold: Option<f64>,
+    /// Run a Presidio NER pass alongside the local recognizers — see
+    /// `TierBOptions` for the two fail-closed behaviours this brings.
+    pub tier_b: Option<TierBOptions>,
+}
+
+/// Run the engine with or without the Presidio pass, depending on options.
+/// One function so the five public entry points cannot drift apart on how
+/// Tier B is wired.
+async fn run_engine(
+    input: Input,
+    format: OutputFormat,
+    entities: Option<&[String]>,
+    score_threshold: Option<f32>,
+    tier_b: Option<&TierBOptions>,
+) -> napi::Result<redact_paperasse_core::RedactionResult> {
+    let engine = Engine::default();
+    let result = match tier_b {
+        Some(tb) => {
+            let client = redact_paperasse_core::detect::TierB::new(tb.analyzer_url.clone());
+            engine
+                .process_with_tier_b(
+                    input,
+                    format,
+                    entities,
+                    score_threshold,
+                    &client,
+                    tb.language.as_deref().unwrap_or("en"),
+                )
+                .await
+        }
+        None => {
+            engine
+                .process(input, format, entities, score_threshold)
+                .await
+        }
+    };
+    result.map_err(|e| napi::Error::from_reason(e.to_string()))
 }
 
 /// Redact PII from plain text — the fastest path (Tier A, in-process, no
@@ -47,22 +113,21 @@ pub async fn redact_text(text: String, options: Option<RedactTextOptions>) -> na
         markdown: None,
         entities: None,
         score_threshold: None,
+        tier_b: None,
     });
-    let engine = Engine::default();
     let format = if options.markdown.unwrap_or(true) {
         OutputFormat::Markdown
     } else {
         OutputFormat::Native
     };
-    let result = engine
-        .process(
-            Input::Text(text),
-            format,
-            options.entities.as_deref(),
-            options.score_threshold.map(|t| t as f32),
-        )
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let result = run_engine(
+        Input::Text(text),
+        format,
+        options.entities.as_deref(),
+        options.score_threshold.map(|t| t as f32),
+        options.tier_b.as_ref(),
+    )
+    .await?;
     // Prefer the field matching what was actually requested. Both fields
     // hold identical content today (`redact_text` sets `text` from the same
     // string as `markdown` on every ingest path), so this is a no-op in
@@ -90,17 +155,16 @@ pub async fn redact_image(
     let options = options.unwrap_or(RedactBytesOptions {
         entities: None,
         score_threshold: None,
+        tier_b: None,
     });
-    let engine = Engine::default();
-    let result = engine
-        .process(
-            Input::Image(bytes.to_vec()),
-            OutputFormat::Native,
-            options.entities.as_deref(),
-            options.score_threshold.map(|t| t as f32),
-        )
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let result = run_engine(
+        Input::Image(bytes.to_vec()),
+        OutputFormat::Native,
+        options.entities.as_deref(),
+        options.score_threshold.map(|t| t as f32),
+        options.tier_b.as_ref(),
+    )
+    .await?;
     Ok(result
         .bytes
         .ok_or_else(|| {
@@ -127,17 +191,16 @@ pub async fn redact_pdf(
     let options = options.unwrap_or(RedactBytesOptions {
         entities: None,
         score_threshold: None,
+        tier_b: None,
     });
-    let engine = Engine::default();
-    let result = engine
-        .process(
-            Input::Pdf(bytes.to_vec()),
-            OutputFormat::Native,
-            options.entities.as_deref(),
-            options.score_threshold.map(|t| t as f32),
-        )
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let result = run_engine(
+        Input::Pdf(bytes.to_vec()),
+        OutputFormat::Native,
+        options.entities.as_deref(),
+        options.score_threshold.map(|t| t as f32),
+        options.tier_b.as_ref(),
+    )
+    .await?;
     Ok(result
         .bytes
         .ok_or_else(|| {
@@ -161,17 +224,16 @@ pub async fn redact_image_text(
     let options = options.unwrap_or(RedactBytesOptions {
         entities: None,
         score_threshold: None,
+        tier_b: None,
     });
-    let engine = Engine::default();
-    let result = engine
-        .process(
-            Input::Image(bytes.to_vec()),
-            OutputFormat::Markdown,
-            options.entities.as_deref(),
-            options.score_threshold.map(|t| t as f32),
-        )
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let result = run_engine(
+        Input::Image(bytes.to_vec()),
+        OutputFormat::Markdown,
+        options.entities.as_deref(),
+        options.score_threshold.map(|t| t as f32),
+        options.tier_b.as_ref(),
+    )
+    .await?;
     Ok(result.markdown.or(result.text).unwrap_or_default())
 }
 
@@ -189,16 +251,15 @@ pub async fn redact_pdf_text(
     let options = options.unwrap_or(RedactBytesOptions {
         entities: None,
         score_threshold: None,
+        tier_b: None,
     });
-    let engine = Engine::default();
-    let result = engine
-        .process(
-            Input::Pdf(bytes.to_vec()),
-            OutputFormat::Markdown,
-            options.entities.as_deref(),
-            options.score_threshold.map(|t| t as f32),
-        )
-        .await
-        .map_err(|e| napi::Error::from_reason(e.to_string()))?;
+    let result = run_engine(
+        Input::Pdf(bytes.to_vec()),
+        OutputFormat::Markdown,
+        options.entities.as_deref(),
+        options.score_threshold.map(|t| t as f32),
+        options.tier_b.as_ref(),
+    )
+    .await?;
     Ok(result.markdown.or(result.text).unwrap_or_default())
 }
