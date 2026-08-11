@@ -88,13 +88,27 @@ impl TierB {
             .json()
             .await?;
 
+        // Presidio is Python: its offsets count *characters*. Everything in
+        // this crate counts *bytes* (regex matches, word-box spans, string
+        // slicing). The two coincide on pure ASCII and silently diverge on
+        // the first accented character -- which on French documents is
+        // usually in the first line. Convert here, at the boundary, so the
+        // rest of the pipeline never has to know Presidio thinks in chars.
+        let byte_of: Vec<usize> = text
+            .char_indices()
+            .map(|(b, _)| b)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        let to_byte =
+            |char_idx: usize| -> usize { byte_of.get(char_idx).copied().unwrap_or(text.len()) };
+
         Ok(response
             .into_iter()
             .map(|item| Entity {
                 entity_type: item.entity_type,
                 span: Span {
-                    start: item.start,
-                    end: item.end,
+                    start: to_byte(item.start),
+                    end: to_byte(item.end),
                 },
                 score: item.score,
                 // Tier B only ever sees extracted text, never layout — the
@@ -105,5 +119,41 @@ impl TierB {
                 source: DetectionSource::TierB,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod offset_tests {
+    /// The conversion in `analyze`, restated for tests: Presidio counts
+    /// chars, this crate counts bytes.
+    fn to_byte_span(text: &str, start_ch: usize, end_ch: usize) -> (usize, usize) {
+        let byte_of: Vec<usize> = text
+            .char_indices()
+            .map(|(b, _)| b)
+            .chain(std::iter::once(text.len()))
+            .collect();
+        let f = |i: usize| byte_of.get(i).copied().unwrap_or(text.len());
+        (f(start_ch), f(end_ch))
+    }
+
+    #[test]
+    fn ascii_offsets_pass_through_unchanged() {
+        assert_eq!(to_byte_span("Jean Dupont", 0, 4), (0, 4));
+    }
+
+    #[test]
+    fn accented_text_shifts_byte_offsets_past_the_char_offsets() {
+        // "Numéro : Dupont" -- é is two bytes, so everything after it sits
+        // one byte further along than Presidio's char count says. Slicing
+        // with unconverted offsets would grab "Dupon" plus a stray byte,
+        // or panic mid-char.
+        let text = "Numéro : Dupont";
+        let (start, end) = to_byte_span(text, 9, 15);
+        assert_eq!(&text[start..end], "Dupont");
+    }
+
+    #[test]
+    fn out_of_range_char_offsets_clamp_to_the_end() {
+        assert_eq!(to_byte_span("abc", 10, 20), (3, 3));
     }
 }

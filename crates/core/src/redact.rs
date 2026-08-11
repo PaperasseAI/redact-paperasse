@@ -36,14 +36,27 @@ const MASK_COLOR: Rgba<u8> = Rgba([0, 0, 0, 255]);
 /// count) — exactly the kind of input this is built for, so this couldn't
 /// stay a "known limitation."
 ///
-/// Match boundaries from a `regex` search over `text` are always valid
-/// UTF-8 char boundaries, so slicing `text[start..end]` never panics.
-/// Overlapping entities (e.g. Tier A and Tier B both matching over the same
-/// span) are merged first so a masked run is never double-processed.
+/// Spans are sanitized before use: clamped to the text length and snapped
+/// back to UTF-8 char boundaries. Tier A's regex matches never need this,
+/// but Tier B's arrive from a network service (converted from char offsets
+/// at that boundary), and a buggy or hostile analyzer must not be able to
+/// panic the redactor -- an out-of-range span from a stub server did
+/// exactly that ("end byte index 102 is out of bounds for string of length
+/// 92") before this guard existed. Overlapping entities (e.g. Tier A and
+/// Tier B both matching over the same span) are merged first so a masked
+/// run is never double-processed.
 fn mask_text(text: &str, entities: &[Entity]) -> String {
+    let snap = |mut i: usize| -> usize {
+        i = i.min(text.len());
+        while !text.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    };
     let mut ranges: Vec<(usize, usize)> = entities
         .iter()
-        .map(|e| (e.span.start, e.span.end))
+        .map(|e| (snap(e.span.start), snap(e.span.end)))
+        .filter(|(start, end)| start < end)
         .collect();
     ranges.sort_unstable();
 
@@ -325,6 +338,24 @@ mod tests {
             bbox: None,
             source: DetectionSource::TierA,
         }
+    }
+
+    #[test]
+    fn an_out_of_range_span_is_clamped_rather_than_panicking() {
+        // The stub-analyzer poison test found this as a real panic: span
+        // 102..112 against 92 bytes of text took down the process. A span
+        // no text backs redacts nothing -- and the placement guard in
+        // process_with_tier_b is what decides whether that miss is an
+        // error; masking's only job is to never crash.
+        let text = "short text";
+        assert_eq!(mask_text(text, &[entity(102, 112)]), "short text");
+    }
+
+    #[test]
+    fn a_span_cutting_a_multibyte_char_snaps_to_the_boundary() {
+        // é spans bytes 3..5; ending at byte 4 would slice mid-char.
+        let masked = mask_text("Numéro", &[entity(0, 4)]);
+        assert!(!masked.is_empty(), "must not panic and must produce text");
     }
 
     #[test]
