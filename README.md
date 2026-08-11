@@ -135,6 +135,12 @@ All three bindings now expose pixel redaction directly, not just `redactText`: N
 
 **npm: same pdfium bug, fixed before its first publish.** The package follows napi-rs's standard multi-platform layout: the root `redact-paperasse` package ships only JS/TS (no bundled binary — see its `files` field) and depends on five per-platform packages (`redact-paperasse-{darwin-x64,darwin-arm64,linux-x64-gnu,linux-arm64-gnu,win32-x64-msvc}`) via `optionalDependencies`. The same pdfium bug that hit the published PyPI wheel was verified to affect the `.node` addon too — confirmed locally by hiding this machine's pdfium cache directory to simulate a foreign machine and watching `redactImage` fail without a bundled library and succeed with one placed next to the `.node` file. `publish.yml` bundles it the same way before publishing each platform subpackage. Not yet actually published — a first real attempt got 4 of 5 platforms built (`darwin-x64`/Intel got stuck on a scarce GitHub runner pool, not a bug) but was superseded by the v0.1.1 version bump before `npm-publish` ran.
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). The short version: never commit a real
+identifier, prove a bug with a failing test before fixing it, and be honest in a
+recognizer's score about how strong its validation actually is.
+
 ## License
 
 MIT — see `NOTICE.md` for a full audit of the dependency tree's own licenses (all permissive; no GPL/AGPL/SSPL anywhere in it, checked by CI's `license-check` job on every push).
