@@ -7,7 +7,7 @@ A privacy engine for agents: image, PDF, office document, or text in → redacte
 ![redact-paperasse: image, PDF, and text/markdown in, redacted out](assets/demo.gif)
 
 *Every frame is real tool output — the ID card's SSN and the PDF are redacted by the actual CLI, not mocked up. All identifiers shown are synthetic.*
-> **Status: early, but working.** `cargo test --workspace` passes (66 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
+> **Status: early, but working.** `cargo test --workspace` passes (80 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
 
@@ -57,7 +57,8 @@ Tier B is fail-closed by design, not fail-open: if the Presidio deployment is un
 crates/
   core/         redact-paperasse-core — the pipeline (ingest/detect/redact)
   recognizers/  redact-paperasse-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS,
-                US_SSN, IBAN_CODE, CREDIT_CARD, PHONE_NUMBER
+                US_SSN, IBAN_CODE, CREDIT_CARD, PHONE_NUMBER,
+                EU_VAT
   cli/          `redactpapr` binary (--features tier-b for the Presidio flag)
 bindings/
   node/         napi-rs (redact-paperasse on npm) — see example.mjs
@@ -72,7 +73,8 @@ Each recognizer is a self-contained module in `crates/recognizers/src/` implemen
 
 Six are registered today, each honest about how strong its own validation actually is:
 
-- **`fr_nir.rs`** / **`iban.rs`** / **`credit_card.rs`** — a real checksum (`FR_NIR`: INSEE mod-97, `IBAN_CODE`: ISO 7064 mod-97, `CREDIT_CARD`: Luhn). A match that fails the checksum is rejected outright rather than reported at low confidence, so anything returned scores `1.0`.
+- **`eu_vat.rs`** — EU VAT numbers for all 27 member states. The two-letter country code is a strong enough anchor to run this by default, where a bare national company number would false-positive constantly. It reports two confidence levels on purpose: `1.0` where the check digits were actually verified (FR, BE, NL, LU) and `0.8` where only the country code and body shape were checked. Reporting `1.0` for the rest would assert a check that never ran. A *failed* checksum is rejected outright rather than downgraded to `0.8` — failing a check is stronger evidence than not running one. Note that `FR40303265045` contains the SIREN `303265045`, so redacting a company number without its VAT number republishes it on the next line.
+- **`fr_nir.rs`** / **`iban.rs`** / **`credit_card.rs`** — a real checksum (`FR_NIR`: INSEE mod-97, `IBAN_CODE`: ISO 7064 mod-97, `CREDIT_CARD`: Luhn *plus* an allocated issuer prefix at a length that network issues — Luhn alone matched every French SIRET). A match that fails the checksum is rejected outright rather than reported at low confidence, so anything returned scores `1.0`.
 - **`us_ssn.rs`** — no checksum exists for SSNs; `validate()` instead encodes the same area/group/serial exclusion rules (000/666/900-999, 00, 0000) Presidio's own `UsSsnRecognizer` uses. Scores `0.85`, not `1.0`, to reflect that this is structural plausibility, not a real checksum.
 - **`phone_number.rs`** — regex shape + digit-count sanity check only, deliberately narrower than Presidio's `phonenumbers`-backed recognizer (no region-aware validation). Scores `0.75`.
 - **`email.rs`** — regex only, no validation beyond the pattern itself. Scores `0.9`.
@@ -81,7 +83,7 @@ Six are registered today, each honest about how strong its own validation actual
 
 Clean, zero warnings, on everything CI checks (`.github/workflows/ci.yml`):
 
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **66/66 tests pass.**
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **80/80 tests pass.**
 - `cargo clippy -p redact-paperasse-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
 - `cargo check -p redact-paperasse-cli --features tier-b` — the Presidio-calling code path, which is off by default.
 - The Node binding is built for real (`napi build --platform`) and exercised with `example.mjs` against the actual compiled addon, not just type-checked.
@@ -104,6 +106,8 @@ This is real, not aspirational — getting here caught and fixed several genuine
 11. **Every photo taken on a phone silently redacted nothing.** Cameras store pixels in the sensor's orientation plus an EXIF tag saying how to rotate them for display. Viewers honour the tag, so the photo looks upright to whoever uploads it — but `image`'s `decode()` ignores it, so OCR was handed sideways text and matched nothing at all. The user then got their file back *unredacted and visibly rotated*, because re-encoding dropped the tag too. Diagnosed from that second symptom (credit to the user, who spotted that the rotation was coming from the backend). Proven with a pair of otherwise identical files: upright pixels gave 3 detections, the same content stored sideways with an orientation tag gave 0. Fixed by applying the tag once at the entry point in `Engine::process`, before ingest — not inside `redact_image_bytes`, since rotating only at redaction time would place boxes using coordinates from a differently-oriented OCR pass. Now 3/3 on upright, 90° and 180° fixtures.
 
 12. **The orientation fix above only helped files that admitted they were rotated.** An EXIF tag is a courtesy, not a guarantee — messaging apps strip it, many scanners never write one, and a screenshot has none. So a page can be stored sideways with nothing in the file to say so, and the fix in 11 does nothing for it. This is the worse case, because the person uploading has no way to know: their gallery shows the page upright either way. Expecting them to rotate it by hand is not a fix, it's a shifted burden. Now, when an image yields *no* detections, the engine retries at 90/180/270 and keeps whichever orientation actually reads, redacting and returning that one — so the file also comes back upright. Verified on sideways PNGs (a format that cannot carry an orientation tag at all): the redacted output is pixel-identical to redacting the upright original. Costs three extra OCR passes, but only on the empty result, so a normal upright page pays nothing.
+
+13. **Every SIRET on a French invoice was being blacked out as a credit card.** A SIRET is 14 digits and Luhn-valid; the card recognizer took 13-19 digits and Luhn. By checksum alone they are indistinguishable, so `--entities CREDIT_CARD` silently destroyed the company number that French invoices are legally required to carry — and the audit report named it a `CREDIT_CARD`, so the trail was wrong too. Luhn is a transcription check, not an identity check: about one in ten arbitrary strings of the right length passes it. The fix is the issuer prefix (credit: the user asked "credit cards have prefixes don't they" — they do, and no network issues cards starting 73). Cards now need an allocated IIN *at a length that network issues*, since the prefix alone still lets a 14-digit SIRET pass as a Diners card. Diners at 14 digits genuinely overlaps SIRET and was kept anyway: dropping a real card format to dodge a false positive is the wrong trade for a redaction tool.
 
 ### Verified against a real document, not just a compiler
 

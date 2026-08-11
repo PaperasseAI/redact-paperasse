@@ -8,6 +8,7 @@
 
 mod credit_card;
 mod email;
+mod eu_vat;
 mod fr_nir;
 mod iban;
 mod phone_number;
@@ -15,6 +16,7 @@ mod us_ssn;
 
 pub use credit_card::CreditCard;
 pub use email::Email;
+pub use eu_vat::EuVat;
 pub use fr_nir::FrNir;
 pub use iban::Iban;
 pub use phone_number::PhoneNumber;
@@ -54,5 +56,6 @@ pub fn default_registry() -> Vec<Box<dyn Recognizer>> {
         Box::new(Iban),
         Box::new(CreditCard),
         Box::new(PhoneNumber),
+        Box::new(EuVat),
     ]
 }
