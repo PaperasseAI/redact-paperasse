@@ -12,6 +12,31 @@ use crate::types::{BoundingBox, DocumentFormat, ExtractedDocument, Input, Span, 
 /// moment anyone changed it.
 pub(crate) const IMAGE_OCR_DPI: f32 = 150.0;
 
+/// Re-encode `bytes` rotated clockwise by `degrees` (90/180/270).
+///
+/// Used to retry OCR on a sideways page. An EXIF tag only helps when the
+/// file actually carries one -- messaging apps commonly strip it, scanners
+/// often never write it, and a screenshot has none. In those cases the
+/// page can be stored sideways with nothing to say so, and a user whose
+/// gallery shows it upright has no reason to think anything is wrong.
+pub(crate) fn rotate_bytes(bytes: &[u8], degrees: u32) -> Option<Vec<u8>> {
+    use std::io::Cursor;
+    let img = image::ImageReader::new(Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()?;
+    let rotated = match degrees {
+        90 => img.rotate90(),
+        180 => img.rotate180(),
+        270 => img.rotate270(),
+        _ => return None,
+    };
+    let mut out = Cursor::new(Vec::new());
+    rotated.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    Some(out.into_inner())
+}
+
 /// Apply a JPEG/WebP/TIFF's EXIF orientation tag to the pixels, returning
 /// re-encoded PNG bytes when a rotation was actually needed.
 ///
@@ -435,6 +460,35 @@ mod orientation_tests {
         let mut buf = std::io::Cursor::new(Vec::new());
         img.write_to(&mut buf, image::ImageFormat::Png).unwrap();
         assert!(normalize_orientation(&buf.into_inner()).is_none());
+    }
+
+    #[test]
+    fn rotating_swaps_the_dimensions_so_a_sideways_page_reads_upright() {
+        // The no-EXIF case: a page whose pixels are sideways with no tag to
+        // say so. Nothing in the file can tell us, so the engine retries the
+        // other orientations when a first pass finds nothing.
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(40, 10)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encodes");
+        let bytes = png.into_inner();
+
+        let rotated = rotate_bytes(&bytes, 90).expect("rotates");
+        let decoded = image::load_from_memory(&rotated).expect("decodes");
+        assert_eq!((decoded.width(), decoded.height()), (10, 40));
+
+        let back = rotate_bytes(&rotated, 270).expect("rotates back");
+        let decoded = image::load_from_memory(&back).expect("decodes");
+        assert_eq!((decoded.width(), decoded.height()), (40, 10));
+    }
+
+    #[test]
+    fn an_unsupported_rotation_is_declined_rather_than_guessed_at() {
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(4, 4)
+            .write_to(&mut png, image::ImageFormat::Png)
+            .expect("encodes");
+        assert!(rotate_bytes(&png.into_inner(), 45).is_none());
     }
 
     #[test]

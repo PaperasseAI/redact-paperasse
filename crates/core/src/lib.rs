@@ -176,15 +176,47 @@ impl Engine {
         // redact_image_bytes matters: if only the redaction step rotated,
         // the boxes would be placed using coordinates from a differently
         // oriented OCR pass and land in the wrong place.
-        let input = match input {
+        let mut input = match input {
             Input::Image(bytes) => {
                 Input::Image(ingest::normalize_orientation(&bytes).unwrap_or(bytes))
             }
             other => other,
         };
 
-        let doc = self.ingestor.ingest(&input, needs_boxes).await?;
+        let mut doc = self.ingestor.ingest(&input, needs_boxes).await?;
         let mut found = self.tier_a.analyze(&doc, entities, score_threshold);
+
+        // If an image turned up nothing, try the other three orientations
+        // before concluding there's nothing to redact. An EXIF tag only
+        // helps when the file carries one, and messaging apps strip them,
+        // scanners often don't write them, and screenshots have none -- so
+        // a page can be stored sideways with nothing to say so. The person
+        // uploading it sees it upright in their gallery and has no reason
+        // to think it needs rotating, so we cannot make that their job.
+        //
+        // Only runs on the empty result, so the common upright case pays
+        // nothing. Whichever orientation actually reads becomes the image
+        // we redact and return, which also hands back an upright file.
+        if found.is_empty() && self.ocr_tiling > 0 {
+            if let Input::Image(ref bytes) = input {
+                for degrees in [90u32, 180, 270] {
+                    let Some(rotated) = ingest::rotate_bytes(bytes, degrees) else {
+                        continue;
+                    };
+                    let candidate = Input::Image(rotated.clone());
+                    let Ok(rdoc) = self.ingestor.ingest(&candidate, needs_boxes).await else {
+                        continue;
+                    };
+                    let rfound = self.tier_a.analyze(&rdoc, entities, score_threshold);
+                    if !rfound.is_empty() {
+                        input = candidate;
+                        doc = rdoc;
+                        found = rfound;
+                        break;
+                    }
+                }
+            }
+        }
 
         // A single full-page OCR pass reliably reads large print and can
         // miss small print entirely -- not because of resolution, but
