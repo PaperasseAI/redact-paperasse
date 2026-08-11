@@ -7,7 +7,7 @@ A privacy engine for agents: image, PDF, office document, or text in → redacte
 ![redact-paperasse: image, PDF, and text/markdown in, redacted out](assets/demo.gif)
 
 *Every frame is real tool output — the ID card's SSN and the PDF are redacted by the actual CLI, not mocked up. All identifiers shown are synthetic.*
-> **Status: early, but working.** `cargo test --workspace` passes (81 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
+> **Status: early, but working.** `cargo test --workspace` passes (88 tests) and `cargo clippy --all-features -D warnings` is clean on both the native host target and `wasm32-unknown-unknown`. The full ingest → detect → redact pipeline is implemented for text, images, PDFs, and office documents (DOCX/XLSX/PPTX/RTF/EPUB/ODT/CSV) — including pixel redaction and PDF reassembly, not just the text path — and both the image and PDF redaction paths have been run end to end against a real photographed French document with a correct, pixel-precise result. CI runs the full check suite on every push. See [Build status](#build-status) for the details.
 
 ## Architecture
 
@@ -58,7 +58,7 @@ crates/
   core/         redact-paperasse-core — the pipeline (ingest/detect/redact)
   recognizers/  redact-paperasse-recognizers — Tier A: FR_NIR, EMAIL_ADDRESS,
                 US_SSN, IBAN_CODE, CREDIT_CARD, PHONE_NUMBER,
-                EU_VAT
+                EU_VAT, FR_SIREN, FR_SIRET
   cli/          `redactpapr` binary (--features tier-b for the Presidio flag)
 bindings/
   node/         napi-rs (redact-paperasse on npm) — see example.mjs
@@ -83,7 +83,7 @@ Six are registered today, each honest about how strong its own validation actual
 
 Clean, zero warnings, on everything CI checks (`.github/workflows/ci.yml`):
 
-- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **81/81 tests pass.**
+- `cargo fmt --all --check`, `cargo clippy --workspace --all-features --all-targets -D warnings`, `cargo test --workspace --locked` — native host. **88/88 tests pass.**
 - `cargo clippy -p redact-paperasse-wasm --target wasm32-unknown-unknown -D warnings` — the browser binding, checked against the actual wasm32 target, not just the host target the main job validates.
 - `cargo check -p redact-paperasse-cli --features tier-b` — the Presidio-calling code path, which is off by default.
 - The Node binding is built for real (`napi build --platform`) and exercised with `example.mjs` against the actual compiled addon, not just type-checked.
