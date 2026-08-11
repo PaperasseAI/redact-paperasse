@@ -287,18 +287,37 @@ jobs:
       - name: Publish every platform subpackage that actually has a binary
         working-directory: bindings/node
         run: |
+          # Idempotent on purpose. When one platform's build flakes, the fix
+          # is to re-run the failed jobs -- but that replays this whole loop,
+          # and npm answers 403 for a version already published, failing the
+          # job even though it just did exactly what was needed. That happened
+          # on v0.1.9: the macOS package published correctly on the re-run and
+          # the job still went red on the next package in the loop, which
+          # makes a green/red signal useless for telling whether the registry
+          # is actually complete.
+          VERSION=$(node -pe "require('./package.json').version")
           for dir in npm/*/; do
-            if ls "$dir"*.node >/dev/null 2>&1; then
-              echo "Publishing $(basename "$dir")"
-              npm publish "$dir" --access public
+            name=$(node -pe "require('./$dir/package.json').name")
+            if ! ls "$dir"*.node >/dev/null 2>&1; then
+              echo "Skipping $name -- no .node binary present (its npm-build leg didn't produce one)"
+            elif npm view "$name@$VERSION" version >/dev/null 2>&1; then
+              echo "Skipping $name -- $VERSION is already on the registry"
             else
-              echo "Skipping $(basename "$dir") -- no .node binary present (its npm-build leg didn't produce one)"
+              echo "Publishing $name@$VERSION"
+              npm publish "$dir" --access public
             fi
           done
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: npm publish --provenance --access public
+      - name: Publish the root package
         working-directory: bindings/node
+        run: |
+          VERSION=$(node -pe "require('./package.json').version")
+          if npm view "redact-paperasse@$VERSION" version >/dev/null 2>&1; then
+            echo "redact-paperasse@$VERSION is already published -- nothing to do"
+          else
+            npm publish --provenance --access public
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
