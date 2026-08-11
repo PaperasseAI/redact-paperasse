@@ -7,7 +7,10 @@ use liteparse::types::PdfInput;
 #[cfg(not(target_arch = "wasm32"))]
 use liteparse::LiteParse;
 #[cfg(not(target_arch = "wasm32"))]
-use printpdf::{Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, RawImage, XObjectTransform};
+use printpdf::{
+    ImageOptimizationOptions, Mm, Op, PdfDocument, PdfPage, PdfSaveOptions, RawImage,
+    XObjectTransform,
+};
 
 use crate::error::EngineError;
 use crate::types::{Entity, ExtractedDocument, OutputFormat, RedactionResult};
@@ -280,10 +283,33 @@ pub async fn redact_pdf_bytes(
         pages.push(PdfPage::new(width_mm, height_mm, ops));
     }
 
+    // NOT PdfSaveOptions::default(): the default carries
+    // image_optimization with a 2MB-per-image byte budget (quality 0.85,
+    // auto-optimize on), which silently downscales embedded pages to fit.
+    // On a real two-page Kbis that squeezed page 1 to an effective ~85 DPI
+    // while page 2 kept ~147 -- the denser page compresses worse, so it got
+    // shrunk harder -- and it made `--dpi` appear to do nothing for PDFs,
+    // because whatever resolution came in, the optimizer converged it onto
+    // the same budget. A redaction tool's output must carry exactly the
+    // pixels the boxes were drawn on; growing the file is the honest cost.
+    let save_options = PdfSaveOptions {
+        image_optimization: Some(ImageOptimizationOptions {
+            // The one non-negotiable: no byte budget, therefore no resizing.
+            // Everything else about the optimizer is welcome -- alpha strip,
+            // true-greyscale detection, JPEG at q0.90 -- because none of it
+            // changes pixel dimensions. Fully lossless pages cost 13MB for a
+            // two-page Kbis; q0.90 JPEG of a document render is visually
+            // clean and two orders of magnitude smaller.
+            max_image_size: None,
+            quality: Some(0.90),
+            // Dithering text edges helps photos, hurts glyphs.
+            dither_greyscale: Some(false),
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
     let mut warnings = Vec::new();
-    Ok(doc
-        .with_pages(pages)
-        .save(&PdfSaveOptions::default(), &mut warnings))
+    Ok(doc.with_pages(pages).save(&save_options, &mut warnings))
 }
 
 #[cfg(test)]

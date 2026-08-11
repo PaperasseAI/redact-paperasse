@@ -85,7 +85,13 @@ fn labelled(text: &str, start: usize) -> bool {
         .nth(LOOKBEHIND)
         .map_or(0, |(i, _)| i);
     let window = text[from..start].to_ascii_uppercase();
-    ["SIRET", "SIREN", "RCS"].iter().any(|k| window.contains(k))
+    // EUID belongs here because the European identifier embeds the SIREN
+    // verbatim: `FR7501.944681634` is court code + SIREN, and a real Kbis
+    // leaked its SIREN through that line while the labelled RCS numbers
+    // above it were redacted.
+    ["SIRET", "SIREN", "RCS", "EUID"]
+        .iter()
+        .any(|k| window.contains(k))
 }
 
 /// The canonical French SIRET display grouping: 3-3-3-5 with a space or dot
@@ -215,6 +221,13 @@ mod tests {
         let d = "35600000009075";
         assert!(!luhn_ok(d), "precondition: La Poste SIRETs fail Luhn");
         assert_eq!(siret(&format!("SIRET {d}")), 1);
+    }
+
+    #[test]
+    fn the_euid_line_counts_as_a_siren_label() {
+        // Verbatim shape from a real Kbis: the EUID is court code + SIREN,
+        // so leaving it unredacted republishes the number.
+        assert_eq!(siren("Européen - EUID FR7501.944681634"), 1);
     }
 
     #[test]

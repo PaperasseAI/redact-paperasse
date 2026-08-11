@@ -58,10 +58,13 @@ struct Cli {
     /// cost of slower OCR and more memory. Redaction boxes are scaled by
     /// this same value, so it stays consistent automatically.
     ///
-    /// Note: this does not affect **PDF** page rendering. PDF pages are
-    /// rasterized by liteparse at a resolution it chooses per page, and it
-    /// ignores this value entirely -- measured, not assumed: 150 and 300 give
-    /// byte-identical page dimensions. See the README on PDF output quality.
+    /// PDF pages honour this too. An earlier version of this help text
+    /// claimed they didn't, based on a real measurement (150 and 300 gave
+    /// byte-identical output) -- but the measurement was of printpdf's image
+    /// optimizer, which was silently downscaling every page to a 2MB byte
+    /// budget after rendering and so erased the difference. The optimizer's
+    /// resizing is now disabled; the measurement repeated gives 1240px vs
+    /// 2479px wide pages, exactly the 2x the flag promises.
     #[arg(long, default_value = "150")]
     dpi: f32,
 
