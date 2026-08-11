@@ -1,6 +1,6 @@
 {
   "name": "redact-paperasse",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "description": "Fast PII redaction for agents \u2014 image/PDF/text in, redacted image/PDF/text/markdown out",
   "main": "index.js",
   "types": "index.d.ts",
@@ -33,11 +33,11 @@
     "@napi-rs/cli": "^2"
   },
   "optionalDependencies": {
-    "redact-paperasse-darwin-x64": "0.1.11",
-    "redact-paperasse-darwin-arm64": "0.1.11",
-    "redact-paperasse-linux-x64-gnu": "0.1.11",
-    "redact-paperasse-linux-arm64-gnu": "0.1.11",
-    "redact-paperasse-win32-x64-msvc": "0.1.11"
+    "redact-paperasse-darwin-x64": "0.1.12",
+    "redact-paperasse-darwin-arm64": "0.1.12",
+    "redact-paperasse-linux-x64-gnu": "0.1.12",
+    "redact-paperasse-linux-arm64-gnu": "0.1.12",
+    "redact-paperasse-win32-x64-msvc": "0.1.12"
   },
   "license": "MIT",
   "repository": "https://github.com/PaperasseAI/redact-paperasse"

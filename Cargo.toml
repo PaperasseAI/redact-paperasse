@@ -13,11 +13,11 @@ members = [
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/PaperasseAI/redact-paperasse"
-version = "0.1.11"
+version = "0.1.12"
 
 [workspace.dependencies]
-redact-paperasse-core = { path = "crates/core", version = "0.1.11" }
-redact-paperasse-recognizers = { path = "crates/recognizers", version = "0.1.11" }
+redact-paperasse-core = { path = "crates/core", version = "0.1.12" }
+redact-paperasse-recognizers = { path = "crates/recognizers", version = "0.1.12" }
 anydoc = "0.1.7"
 # default-features = false here, not true: Cargo's workspace-inheritance
 # only allows a member to override `default-features` DOWNWARD (off) if the

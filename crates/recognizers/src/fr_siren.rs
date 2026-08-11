@@ -6,12 +6,24 @@ use crate::{Match, Recognizer};
 
 /// SIREN (9 digits) and SIRET (14 digits) — French company identifiers.
 ///
-/// Both are Luhn-validated, and **both additionally require a nearby label**
-/// (`SIREN`, `SIRET`, `RCS`, `N° SIRET`…). That is not belt-and-braces, it is
-/// the only thing making them usable: Luhn passes roughly one arbitrary
-/// string in ten, so a bare 9-digit rule would claim invoice totals, order
-/// references and customer numbers on every document it saw. The label is
-/// what turns a coincidence into a statement.
+/// Both are Luhn-validated, and both need an anchor beyond the checksum:
+/// Luhn passes roughly one arbitrary string in ten, so a bare digit rule
+/// would claim invoice totals, order references and customer numbers on
+/// every document it saw.
+///
+/// The anchors differ, and the asymmetry is deliberate:
+///
+/// * **SIRET**: a nearby label (`SIRET`, `SIREN`, `RCS`) *or* the canonical
+///   3-3-3-5 grouping (`944 681 634 00019`). The grouping alone is a strong
+///   claim — French formats no other quantity that way (thousands grouping
+///   on 14 digits would be 2-3-3-3-3). This matters on forms: a real CFE
+///   declaration carried its SIRET in an address block with the nearest
+///   textual label 2,758 characters away on a later page, so any
+///   label-window rule fails there. Measured, not estimated.
+/// * **SIREN**: a nearby label, always. The tempting grouped-3-3-3 anchor
+///   collides with French number typesetting itself: `123 456 789` is
+///   exactly how millions are written in amounts, and one in ten of those
+///   passes Luhn. A grouped-but-unlabelled SIREN rule would redact money.
 ///
 /// They are registered, but the demo leaves them unticked, and that
 /// asymmetry is deliberate. A SIREN is public data — the whole Sirene
@@ -76,6 +88,12 @@ fn labelled(text: &str, start: usize) -> bool {
     ["SIRET", "SIREN", "RCS"].iter().any(|k| window.contains(k))
 }
 
+/// The canonical French SIRET display grouping: 3-3-3-5 with a space or dot
+/// between every group. Partial or absent separators fall back to needing a
+/// label — conservative on purpose.
+static SIRET_GROUPED: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^\d{3}[ .]\d{3}[ .]\d{3}[ .]\d{5}$").expect("fixed literal"));
+
 pub struct FrSiret;
 
 impl Recognizer for FrSiret {
@@ -93,7 +111,7 @@ impl Recognizer for FrSiret {
                 } else {
                     luhn_ok(&d)
                 };
-                valid && labelled(text, m.start())
+                valid && (labelled(text, m.start()) || SIRET_GROUPED.is_match(m.as_str()))
             })
             .map(|m| Match {
                 start: m.start(),
@@ -147,11 +165,27 @@ mod tests {
     }
 
     #[test]
-    fn an_unlabelled_number_is_ignored_however_valid() {
-        // The whole point: Luhn alone is not evidence. Without a label this
-        // is just a 14-digit number that happens to pass a checksum.
+    fn an_unlabelled_compact_number_is_ignored_however_valid() {
+        // Luhn alone is not evidence. Without a label or the canonical
+        // grouping this is just a 14-digit number passing a checksum.
         assert_eq!(siret("Référence 73282932000074"), 0);
         assert_eq!(siren("Total 732829320"), 0);
+    }
+
+    #[test]
+    fn canonical_grouping_anchors_a_siret_without_any_label() {
+        // Verbatim shape from a real CFE form: the SIRET sat in an address
+        // block, nearest label 2,758 characters away on a later page. The
+        // 3-3-3-5 grouping is itself the anchor.
+        assert_eq!(siret("75008 PARIS 944 681 634 00019 66198"), 1);
+    }
+
+    #[test]
+    fn grouping_does_not_anchor_a_siren_because_amounts_look_like_that() {
+        // 732 829 320 passes Luhn AND is exactly how French typesets
+        // millions. Redacting it unlabelled would redact money.
+        assert_eq!(siren("montant : 732 829 320"), 0);
+        assert_eq!(siren("SIREN 732 829 320"), 1);
     }
 
     #[test]
