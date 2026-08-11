@@ -53,10 +53,15 @@ struct Cli {
     #[arg(long)]
     score_threshold: Option<f32>,
 
-    /// DPI the page is rasterized at before OCR. Higher reads finer print
+    /// DPI images are rasterized at before OCR. Higher reads finer print
     /// (small print in a dense scan can be missed at the default) at the
     /// cost of slower OCR and more memory. Redaction boxes are scaled by
     /// this same value, so it stays consistent automatically.
+    ///
+    /// Note: this does not affect **PDF** page rendering. PDF pages are
+    /// rasterized by liteparse at a resolution it chooses per page, and it
+    /// ignores this value entirely -- measured, not assumed: 150 and 300 give
+    /// byte-identical page dimensions. See the README on PDF output quality.
     #[arg(long, default_value = "150")]
     dpi: f32,
 
