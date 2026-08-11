@@ -210,58 +210,38 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// The manual ingest → Tier A + Tier B → merge → redact pipeline, composed
-/// from redact-paperasse-core's public pieces instead of `Engine::process`
-/// (which only knows about Tier A) — exactly the pattern `TierB`'s own doc
-/// comment describes: construct it, run it alongside Tier A, and merge.
-///
-/// Scoped to `Input::Text` only. Tier B never has pixel coordinates (see
-/// `TierB::analyze`'s doc comment), so an image/PDF redaction request with
-/// `--tier-b` fails loudly here instead of silently skipping the entities
-/// it can't place — the same fail-closed principle `AnydocIngestor`
-/// already applies when it can't safely fulfill a pixel-redaction request.
+/// `--tier-b`: the engine's own pipeline with a Presidio NER pass merged
+/// in — see `Engine::process_with_tier_b` for the two policies that matter
+/// (fail-closed on unplaceable spans, Tier A wins overlaps). Works for
+/// every input kind now that Tier B spans are routed through the same word
+/// boxes Tier A uses; the old text-only restriction existed only because
+/// that routing was missing.
 #[cfg(feature = "tier-b")]
 async fn run_with_tier_b(
     cli: &Cli,
     input: Input,
     format: OutputFormat,
 ) -> anyhow::Result<redact_paperasse_core::RedactionResult> {
-    use redact_paperasse_core::detect::{TierA, TierB};
-    use redact_paperasse_core::redact::redact_text;
-    use redact_paperasse_core::ExtractedDocument;
+    use redact_paperasse_core::detect::TierB;
 
-    let text = match input {
-        Input::Text(text) => text,
-        _ => anyhow::bail!(
-            "--tier-b only supports text input today: Tier B never has pixel coordinates, so it \
-             can't safely participate in image/PDF/document redaction (see run_with_tier_b's doc \
-             comment). Redact this input without --tier-b, or extract its text first."
-        ),
-    };
-
-    let doc = ExtractedDocument {
-        text: text.clone(),
-        ..Default::default()
-    };
-
-    let mut entities = TierA::default().analyze(&doc, cli.entities.as_deref(), cli.score_threshold);
-
-    let tier_b_entities = TierB::from_env()
-        .analyze(&text, &cli.language)
+    let engine = make_engine(cli.dpi);
+    engine
+        .process_with_tier_b(
+            input,
+            format,
+            cli.entities.as_deref(),
+            cli.score_threshold,
+            &TierB::from_env(),
+            &cli.language,
+        )
         .await
-        .map_err(|e| anyhow::anyhow!("Tier B (Presidio) request failed: {e}. Set {} to point at a running presidio-analyzer, or drop --tier-b.", redact_paperasse_core::detect::tier_b::ANALYZER_URL_ENV))?;
-
-    entities.extend(tier_b_entities.into_iter().filter(|e| {
-        let entity_ok = cli
-            .entities
-            .as_deref()
-            .is_none_or(|wanted| wanted.iter().any(|w| w == &e.entity_type));
-        let score_ok = cli
-            .score_threshold
-            .is_none_or(|threshold| e.score >= threshold);
-        entity_ok && score_ok
-    }));
-
-    Ok(redact_text(&doc, &entities, format))
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "{e}\n(If this is a connection error: set {} to point at a running \
+                 presidio-analyzer, or drop --tier-b.)",
+                redact_paperasse_core::detect::tier_b::ANALYZER_URL_ENV
+            )
+        })
 }
 
 fn guess_kind(path: Option<&std::path::Path>, bytes: &[u8]) -> InputKind {

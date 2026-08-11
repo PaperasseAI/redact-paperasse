@@ -150,6 +150,97 @@ impl Engine {
         entities: Option<&[String]>,
         score_threshold: Option<f32>,
     ) -> Result<RedactionResult, EngineError> {
+        let (input, doc, found, _needs_boxes) = self
+            .detect_phase(input, format, entities, score_threshold)
+            .await?;
+        self.redact_phase(input, doc, found, format).await
+    }
+
+    /// `process`, plus a Tier B (Presidio NER) pass merged in between
+    /// detection and redaction — names, locations, and anything else
+    /// context-dependent that Tier A's fixed-format recognizers
+    /// structurally cannot cover.
+    ///
+    /// Tier B spans are routed through the same `word_boxes` lookup Tier A
+    /// uses (`detect::attach_bboxes`), which is what lets a PERSON found in
+    /// OCR text get a real black box on an image or PDF. Two policies are
+    /// deliberate here:
+    ///
+    /// * **Fail-closed on placement.** When pixel output is requested and a
+    ///   Tier B entity's span cannot be matched to any word box, the whole
+    ///   run errors, naming the entity types that would have been silently
+    ///   missing. A document that *looks* redacted while an unplaceable
+    ///   name sits visible in the pixels is this tool's worst output.
+    /// * **Tier A wins overlaps.** A Tier B span overlapping any Tier A
+    ///   span is dropped: Tier A's checksum-validated match is the reliable
+    ///   signal (Presidio also flags emails and NIR-shaped numbers, and
+    ///   double-reporting the same characters would lie in the report and
+    ///   double-splice text redaction).
+    ///
+    /// The REST hop itself is fail-closed too: if the analyzer is down, the
+    /// error propagates rather than quietly returning a Tier-A-only result
+    /// that's missing every name it was asked to catch.
+    #[cfg(feature = "tier-b")]
+    pub async fn process_with_tier_b(
+        &self,
+        input: Input,
+        format: OutputFormat,
+        entities: Option<&[String]>,
+        score_threshold: Option<f32>,
+        tier_b: &detect::TierB,
+        language: &str,
+    ) -> Result<RedactionResult, EngineError> {
+        let (input, doc, mut found, needs_boxes) = self
+            .detect_phase(input, format, entities, score_threshold)
+            .await?;
+
+        let mut extra: Vec<Entity> = tier_b
+            .analyze(&doc.text, language)
+            .await?
+            .into_iter()
+            .filter(|e| {
+                let entity_ok =
+                    entities.is_none_or(|wanted| wanted.iter().any(|w| w == &e.entity_type));
+                let score_ok = score_threshold.is_none_or(|t| e.score >= t);
+                let overlaps_tier_a = found
+                    .iter()
+                    .any(|a| a.span.start < e.span.end && e.span.start < a.span.end);
+                entity_ok && score_ok && !overlaps_tier_a
+            })
+            .collect();
+
+        detect::attach_bboxes(&mut extra, &doc.word_boxes);
+
+        if needs_boxes {
+            let unplaceable = detect::unplaceable_types(&extra);
+            if !unplaceable.is_empty() {
+                return Err(EngineError::Redact(format!(
+                    "Tier B found {} entit{} ({}) whose text span could not be matched to any                      OCR word box, so a pixel redaction would silently leave {} visible.                      Refusing to produce a document that looks redacted but isn't; request                      OutputFormat::Markdown for a text-level redaction of this input instead.",
+                    unplaceable.len(),
+                    if unplaceable.len() == 1 { "y" } else { "ies" },
+                    unplaceable.join(", "),
+                    if unplaceable.len() == 1 { "it" } else { "them" },
+                )));
+            }
+        }
+
+        found.extend(extra);
+        self.redact_phase(input, doc, found, format).await
+    }
+
+    /// Everything up to (but not including) redaction: validation, EXIF
+    /// normalization, ingestion, Tier A, the empty-result orientation
+    /// ladder, and the tiled OCR merge. Split out so detection sources
+    /// beyond Tier A (`process_with_tier_b`) can inject their results
+    /// between detection and redaction while reusing all of the recovery
+    /// machinery instead of reimplementing it.
+    async fn detect_phase(
+        &self,
+        input: Input,
+        format: OutputFormat,
+        entities: Option<&[String]>,
+        score_threshold: Option<f32>,
+    ) -> Result<(Input, ExtractedDocument, Vec<Entity>, bool), EngineError> {
         // A Document input (DOCX/XLSX/PPTX/...) only ever converts TO
         // markdown (anydoc never writes back to a native office format), so
         // there's no "redacted native document" this pipeline can produce.
@@ -254,8 +345,19 @@ impl Engine {
                 }
             }
         }
-        let entities = found;
+        Ok((input, doc, found, needs_boxes))
+    }
 
+    /// The redaction tail shared by every process variant: route the final
+    /// entity list to the text, image, or PDF redactor based on what the
+    /// detect phase produced.
+    async fn redact_phase(
+        &self,
+        input: Input,
+        doc: ExtractedDocument,
+        entities: Vec<Entity>,
+        format: OutputFormat,
+    ) -> Result<RedactionResult, EngineError> {
         if format == OutputFormat::Markdown {
             return Ok(redact::redact_text(&doc, &entities, format));
         }

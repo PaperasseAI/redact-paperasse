@@ -20,7 +20,7 @@ use crate::types::{BoundingBox, DetectionSource, Entity, ExtractedDocument, Span
 /// overlapping set — a match spanning a page boundary (rare; text is
 /// joined continuously across pages) doesn't get a nonsensical
 /// cross-page rectangle.
-fn union_bbox(
+pub(crate) fn union_bbox(
     word_boxes: &[crate::types::WordBox],
     start: usize,
     end: usize,
