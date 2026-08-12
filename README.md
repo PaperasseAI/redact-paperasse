@@ -49,7 +49,7 @@ Neither library is forked or modified — both are consumed as ordinary crates.i
 
 Regex+checksum recognizers (SSNs, the French NIR, IBANs, emails — a fixed identifier format with a real validation algorithm) are cheap, deterministic, and portable to any language with zero ML dependency. General NER (names, locations, anything context-dependent) needs a real NLP stack and is meaningfully less certain — in testing against a real document while building the `FR_NIR` recognizer for Presidio (on the [`paperasse-fr-nir` branch](https://github.com/PaperasseAI/presidio/tree/paperasse-fr-nir) of `data-privacy-stack/presidio`), the checksum-validated match was the reliable signal; the NER layer's guesses were the wrong ones.
 
-So Tier A — the regex+checksum layer — is the default, in-process, zero-network path (`crates/recognizers`). Tier B is an explicit opt-in REST call to a Presidio deployment (`--tier-b` on the CLI, `tierB: { analyzerUrl, language }` in the Node binding), for when Tier A's coverage genuinely isn't enough. Both tiers accept the same two filters (`entities`, `score_threshold`), matching Presidio's own request fields.
+So Tier A — the regex+checksum layer — is the default, in-process, zero-network path (`crates/recognizers`). Tier B is an explicit opt-in REST call to a Presidio deployment (`--tier-b` on the CLI, `tierB: { analyzerUrl, language }` in the Node binding, `analyzer_url=`/`language=` kwargs in the Python binding), for when Tier A's coverage genuinely isn't enough. Both tiers accept the same two filters (`entities`, `score_threshold`), matching Presidio's own request fields.
 
 Three Tier B policies are deliberate and worth knowing before turning it on:
 

@@ -1,5 +1,47 @@
 use pyo3::prelude::*;
-use redact_paperasse_core::{Engine, Input, OutputFormat};
+use redact_paperasse_core::{Engine, EngineError, Input, OutputFormat, RedactionResult};
+
+/// Run the engine with or without the Presidio pass. One function so the
+/// five entry points cannot drift apart on how Tier B is wired -- the same
+/// discipline the Node binding uses.
+///
+/// Tier B activates when `analyzer_url` is set, and brings two fail-closed
+/// behaviours the caller should know: an unreachable analyzer errors the
+/// run rather than quietly returning a result missing every name it was
+/// asked to catch, and a span that cannot be placed on any OCR word box
+/// errors a pixel output naming what would have been silently visible.
+/// The text goes to that URL -- point it at an analyzer you run; nothing
+/// here ever picks a remote endpoint on its own.
+async fn run_engine(
+    input: Input,
+    format: OutputFormat,
+    entities: Option<Vec<String>>,
+    score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
+) -> Result<RedactionResult, EngineError> {
+    let engine = Engine::default();
+    match analyzer_url {
+        Some(url) => {
+            let tier_b = redact_paperasse_core::detect::TierB::new(url);
+            engine
+                .process_with_tier_b(
+                    input,
+                    format,
+                    entities.as_deref(),
+                    score_threshold,
+                    &tier_b,
+                    &language,
+                )
+                .await
+        }
+        None => {
+            engine
+                .process(input, format, entities.as_deref(), score_threshold)
+                .await
+        }
+    }
+}
 
 /// Redact PII from plain text (Tier A: in-process regex+checksum
 /// recognizers, no network call). Markdown is the default output (this is
@@ -11,30 +53,32 @@ use redact_paperasse_core::{Engine, Input, OutputFormat};
 /// `score_threshold=0.95` to drop matches scoring below it — matches
 /// Presidio's own `score_threshold`.
 #[pyfunction]
-#[pyo3(signature = (text, markdown=true, entities=None, score_threshold=None))]
+#[pyo3(signature = (text, markdown=true, entities=None, score_threshold=None, analyzer_url=None, language="en".to_string()))]
 fn redact_text(
     py: Python<'_>,
     text: String,
     markdown: bool,
     entities: Option<Vec<String>>,
     score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let engine = Engine::default();
         let format = if markdown {
             OutputFormat::Markdown
         } else {
             OutputFormat::Native
         };
-        let result = engine
-            .process(
-                Input::Text(text),
-                format,
-                entities.as_deref(),
-                score_threshold,
-            )
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let result = run_engine(
+            Input::Text(text),
+            format,
+            entities,
+            score_threshold,
+            analyzer_url,
+            language,
+        )
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         // Prefer the field matching what was actually requested. Both
         // fields hold identical content today (`redact_text` sets `text`
         // from the same string as `markdown` on every ingest path), so this
@@ -56,24 +100,26 @@ fn redact_text(
 /// against a real photographed document — see the repo README's "Build
 /// status" section.
 #[pyfunction]
-#[pyo3(signature = (image_bytes, entities=None, score_threshold=None))]
+#[pyo3(signature = (image_bytes, entities=None, score_threshold=None, analyzer_url=None, language="en".to_string()))]
 fn redact_image(
     py: Python<'_>,
     image_bytes: Vec<u8>,
     entities: Option<Vec<String>>,
     score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let engine = Engine::default();
-        let result = engine
-            .process(
-                Input::Image(image_bytes),
-                OutputFormat::Native,
-                entities.as_deref(),
-                score_threshold,
-            )
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let result = run_engine(
+            Input::Image(image_bytes),
+            OutputFormat::Native,
+            entities,
+            score_threshold,
+            analyzer_url,
+            language,
+        )
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         result.bytes.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("no bytes returned for an image input")
         })
@@ -88,24 +134,26 @@ fn redact_image(
 /// Verified against a real document embedded in a PDF — see the repo
 /// README's "Build status" section.
 #[pyfunction]
-#[pyo3(signature = (pdf_bytes, entities=None, score_threshold=None))]
+#[pyo3(signature = (pdf_bytes, entities=None, score_threshold=None, analyzer_url=None, language="en".to_string()))]
 fn redact_pdf(
     py: Python<'_>,
     pdf_bytes: Vec<u8>,
     entities: Option<Vec<String>>,
     score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let engine = Engine::default();
-        let result = engine
-            .process(
-                Input::Pdf(pdf_bytes),
-                OutputFormat::Native,
-                entities.as_deref(),
-                score_threshold,
-            )
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let result = run_engine(
+            Input::Pdf(pdf_bytes),
+            OutputFormat::Native,
+            entities,
+            score_threshold,
+            analyzer_url,
+            language,
+        )
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         result.bytes.ok_or_else(|| {
             pyo3::exceptions::PyRuntimeError::new_err("no bytes returned for a pdf input")
         })
@@ -123,24 +171,26 @@ fn redact_pdf(
 /// here -- `OutputFormat::Native` means pixel bytes for an image input, not
 /// plain text.
 #[pyfunction]
-#[pyo3(signature = (image_bytes, entities=None, score_threshold=None))]
+#[pyo3(signature = (image_bytes, entities=None, score_threshold=None, analyzer_url=None, language="en".to_string()))]
 fn redact_image_text(
     py: Python<'_>,
     image_bytes: Vec<u8>,
     entities: Option<Vec<String>>,
     score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let engine = Engine::default();
-        let result = engine
-            .process(
-                Input::Image(image_bytes),
-                OutputFormat::Markdown,
-                entities.as_deref(),
-                score_threshold,
-            )
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let result = run_engine(
+            Input::Image(image_bytes),
+            OutputFormat::Markdown,
+            entities,
+            score_threshold,
+            analyzer_url,
+            language,
+        )
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(result.markdown.or(result.text).unwrap_or_default())
     })
 }
@@ -150,24 +200,26 @@ fn redact_image_text(
 /// `redact_image_text`: `OutputFormat::Markdown` short-circuits
 /// `Engine::process` before it reaches the pixel-redaction path.
 #[pyfunction]
-#[pyo3(signature = (pdf_bytes, entities=None, score_threshold=None))]
+#[pyo3(signature = (pdf_bytes, entities=None, score_threshold=None, analyzer_url=None, language="en".to_string()))]
 fn redact_pdf_text(
     py: Python<'_>,
     pdf_bytes: Vec<u8>,
     entities: Option<Vec<String>>,
     score_threshold: Option<f32>,
+    analyzer_url: Option<String>,
+    language: String,
 ) -> PyResult<Bound<'_, PyAny>> {
     pyo3_async_runtimes::tokio::future_into_py(py, async move {
-        let engine = Engine::default();
-        let result = engine
-            .process(
-                Input::Pdf(pdf_bytes),
-                OutputFormat::Markdown,
-                entities.as_deref(),
-                score_threshold,
-            )
-            .await
-            .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
+        let result = run_engine(
+            Input::Pdf(pdf_bytes),
+            OutputFormat::Markdown,
+            entities,
+            score_threshold,
+            analyzer_url,
+            language,
+        )
+        .await
+        .map_err(|e| pyo3::exceptions::PyRuntimeError::new_err(e.to_string()))?;
         Ok(result.markdown.or(result.text).unwrap_or_default())
     })
 }

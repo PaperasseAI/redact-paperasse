@@ -15,7 +15,7 @@ name = "redact_paperasse"
 crate-type = ["cdylib"]
 
 [dependencies]
-redact-paperasse-core = { workspace = true }
+redact-paperasse-core = { workspace = true, features = ["tier-b"] }
 # abi3-py39 targets Python's stable C API frozen at 3.9 (matches
 # pyproject.toml's requires-python) -- one wheel per platform instead of
 # one per Python version, and immune to "PyO3 doesn't know this Python
